@@ -1,0 +1,7 @@
+# 行尾按文件原样保存，不做归一化。
+#
+# 这个仓库的源码是 CRLF 与 LF 混用的（`src/database.ts`、`src/index.ts`、
+# `src/console.ts` 等是 CRLF，`client/` 与新写的模块是 LF），而构建与测试
+# 只在 Linux 上跑。让 git 把行尾统一成一种，会在 Windows 检出时改写工作区、
+# 在 Linux 上产生整文件差异，还会让按行匹配的批处理脚本静默失效。
+* -text

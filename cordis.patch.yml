@@ -1,0 +1,19 @@
+# Bundle patch for `dsh-session-optimizer`.
+#
+# Listed in `dsh.profile.bundles`, this layer replaces the official JSONL
+# session backend with the SQLite one. The two providers expose the same
+# `sessionPersistence` service, so exactly one of them may be mounted: the
+# JSONL entry from `@deepseek-ai/dsh-base` is disabled here and the SQLite
+# entry takes its place.
+#
+# The root is per profile, not per session: inside it every session gets its
+# own `<project>/<session>/session.db`, mirroring the official JSONL layout.
+- id: session-persistence-jsonl
+  disabled: true
+
+- insert:
+    - id: session-persistence-optimizer
+      name: dsh-session-optimizer
+      config:
+        root: !!js dshHomePath('sessions-sqlite')
+        storageThread: worker
