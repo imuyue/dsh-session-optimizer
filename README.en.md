@@ -1,4 +1,4 @@
-<h1 align="center">dsh-session-optimizer</h1>
+<h1 align="center"><img src="icon.svg" width="40" height="40" alt="icon" valign="middle"> dsh-session-optimizer</h1>
 
 ---
 
