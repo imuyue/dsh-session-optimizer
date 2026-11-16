@@ -49,7 +49,7 @@ Known edges, stated plainly. None of them is a surprise on the right workload, b
 
 * Windows has no `flock`, so the lease is a lock file plus a liveness check; a lock left by a killed process is reclaimed once that process is gone.
 * Directory and file modes (`0700`/`0600`) are enforced with POSIX semantics. On Windows they are best-effort and depend on the filesystem ACLs.
-* The plugin targets DSH `>=0.2.2-rc.1 <0.3.0` and Node `>=24.9.0`. The database records `dsh_contract_version = 4`; a different contract is refused on open.
+* The plugin targets DSH `>=0.2.2-rc.1` and Node `>=24.9.0`. The database records `dsh_contract_version = 4`; a different contract is refused on open.
 
 ## Privacy and access
 

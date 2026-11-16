@@ -11,7 +11,7 @@
 | --- | --- |
 | Node.js | >= 24.9.0 |
 | npm | any recent version |
-| DSH | `0.2.2-rc.1` (peer, `>=0.2.2-rc.1 <0.3.0`) |
+| DSH | `0.2.2-rc.1` (peer, `>=0.2.2-rc.1`) |
 | Python | 3.x, only for the benchmark charts (`zstandard`, `matplotlib`) |
 
 ## Build
