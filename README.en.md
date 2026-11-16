@@ -1,7 +1,5 @@
 <h1 align="center"><img src="icon.svg" width="40" height="40" alt="icon" valign="middle"> dsh-session-optimizer</h1>
 
----
-
 <p align="center"><b>Keep every conversation fluid.</b></p>
 
 <p align="center">A SQLite session store for DeepSeek Harness: faster pages, smaller files, reversible migration.</p>
