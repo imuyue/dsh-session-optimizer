@@ -13,8 +13,6 @@
   <a href="package.json"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1-4b5563.svg" alt="dsh"></a>
 </p>
 
-<p align="center">Current version 0.1.0 &middot; DSH Desktop <code>&gt;=0.2.2-rc.1</code> &middot; Node <code>&gt;=24.9.0</code></p>
-
 <p align="center"><a href="README.md">简体中文</a></p>
 
 <p align="center">
