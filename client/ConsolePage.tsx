@@ -2,11 +2,9 @@
  * The console page itself: four views over the read-only Host routes.
  *
  * The views are the storage overview, the conversation converter, the latency
- * panel and the settings panel — nothing else. A session list, a raw event reader
- * and a diagnostics page all existed once and were removed: each of them either
- * duplicated what the session list already shows or answered a question nobody
- * asked on this panel. The routes behind them went with them, because an endpoint
- * nobody reads is still code to maintain.
+ * panel and the settings panel — nothing else. Health and directory permissions
+ * remain in the overview; the Client has no separate diagnostics view. Host
+ * diagnostic APIs are independent of this navigation and remain available.
  *
  * Health is not its own view either: the overview states it in one line and one
  * card, which is the whole of what a reader wants from it when nothing is wrong.
@@ -24,19 +22,20 @@
  * @module dsh-session-optimizer/client/ConsolePage
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives'
 import { fetchOverview, fetchSettings, saveSettings } from './api.ts'
-import type { Overview, Preferences, SettingsAnswer, UsageRow } from './types.ts'
+import type { Overview, Preferences, SettingsAnswer } from './types.ts'
 import { type Text, localeOf, textOf } from './i18n.ts'
 import { onLibraryChanged } from './library.ts'
-import { DiagnosticsTab } from './DiagnosticsTab.tsx'
 import { MetricsTab } from './MetricsTab.tsx'
 import { SettingsTab } from './SettingsTab.tsx'
 import { ensureStyles } from './styles.ts'
 import { TransferTab } from './TransferTab.tsx'
+import { hydrateUsageTitles } from './usage-titles.ts'
+import { UsageRows } from './UsageRows.tsx'
 
-type View = 'overview' | 'transfer' | 'metrics' | 'diagnostics' | 'settings'
+type View = 'overview' | 'transfer' | 'metrics' | 'settings'
 
 /** Render an epoch-millisecond stamp in the console's own locale. */
 function stamp(ms: number, locale: string): string {
@@ -47,19 +46,6 @@ function stamp(ms: number, locale: string): string {
 /** Group digits, so a five-figure event count stays readable. */
 function count(value: number, locale: string): string {
   return Number.isFinite(value) ? value.toLocaleString(locale) : '—'
-}
-
-/**
- * How much of the root one conversation takes, as the bar's width.
- *
- * Two decimals below one percent: the interesting small conversation is usually
- * thousands of times smaller than the largest, and rounding it to `0.0%` would
- * make an occupied row look empty.
- */
-function share(row: UsageRow, total: number): string {
-  if (total <= 0) return '0%'
-  const percent = (row.sizeBytes / total) * 100
-  return `${percent >= 1 ? percent.toFixed(1) : percent.toFixed(2)}%`
 }
 
 function OneCard({ label, value, note }: { label: string; value: string; note: string }) {
@@ -92,6 +78,7 @@ function healthLine(overview: Overview, text: Text, locale: string): { line: str
       tone: 'warning',
     }
   }
+  if (overview.eventsPending === true) return { line:text.overview.metadataOnly, tone:'warning' }
   return { line: text.overview.healthy(count(overview.sessions, locale)), tone: 'ok' }
 }
 
@@ -102,8 +89,56 @@ function healthLine(overview: Overview, text: Text, locale: string): { line: str
  * the room" without a control; the share bar makes the answer visible at a
  * glance, which a column of byte counts does not.
  */
-function OverviewTab({ overview, text, locale }: { overview: Overview | undefined; text: Text; locale: string }) {
+function OverviewTab({ overview: source, text, locale }: { overview: Overview | undefined; text: Text; locale: string }) {
+  const [loaded, setLoaded] = useState<{ source: Overview; value: Overview } | undefined>(undefined)
+  const [paging, setPaging] = useState(false)
+  const [pageError, setPageError] = useState<string | undefined>(undefined)
+  const pending = useRef<AbortController | undefined>(undefined)
+  const enrich = (value: Overview, owner: Overview, controller: AbortController): void => {
+    void hydrateUsageTitles(value, controller.signal, rows => {
+      if (controller.signal.aborted || pending.current !== controller) return
+      if (rows.some(row => row.removed === true)) { controller.abort(); loadPage(value.usageOffset ?? 0); return }
+      setLoaded(current => {
+        const present = current?.source === owner ? current.value : value
+        if ((present.usageOffset ?? 0) !== (value.usageOffset ?? 0)) return current
+        const titles = new Map(rows.map(row => [row.id, row]))
+        return { source: owner, value: { ...present, usage: present.usage.map(row => titles.get(row.id) ?? row) } }
+      })
+    }).catch(() => { /* cancellation leaves the new page authoritative */ })
+  }
+  useEffect(() => {
+    pending.current?.abort(); pending.current = undefined
+    setLoaded(undefined); setPaging(false); setPageError(undefined)
+    if (source !== undefined && source.usage.some(row => row.titlePending === true)) {
+      const controller = new AbortController(); pending.current = controller
+      enrich(source, source, controller)
+    }
+    return () => { pending.current?.abort(); pending.current = undefined }
+  }, [source])
+  const overview = loaded !== undefined && loaded.source === source ? loaded.value : source
   if (overview === undefined) return <div className="dshsql-empty">{text.overview.reading}</div>
+  const offset = overview.usageOffset ?? 0, limit = overview.usageLimit ?? 50
+  const total = overview.usageTotal ?? overview.usage.length
+  const loadPage = (nextOffset: number): void => {
+    if (source === undefined) return
+    pending.current?.abort()
+    const controller = new AbortController(); pending.current = controller
+    setPaging(true); setPageError(undefined)
+    void fetchOverview(controller.signal, { offset: nextOffset, limit }).then(value => {
+      if (!controller.signal.aborted && pending.current === controller) { setLoaded({ source, value }); enrich(value, source, controller) }
+    }).catch(error => {
+      if (!controller.signal.aborted && pending.current === controller) setPageError(error instanceof Error ? error.message : String(error))
+    }).finally(() => {
+      if (!controller.signal.aborted && pending.current === controller) setPaging(false)
+    })
+  }
+  const navigation = <nav className="dshsql-section-head" aria-label={text.overview.usageTitle}>
+    <button type="button" className="dshsql-btn dshsql-btn-sm" disabled={paging || offset === 0} onClick={() => { loadPage(Math.max(0, offset - limit)) }}>{text.transfer.previousPage}</button>
+    <span className="dshsql-muted">{text.transfer.pageOf(Math.floor(offset / limit) + 1, Math.max(1, Math.ceil(total / limit)))}</span>
+    <button type="button" className="dshsql-btn dshsql-btn-sm" disabled={paging || offset + overview.usage.length >= total} onClick={() => { loadPage(offset + limit) }}>{text.transfer.nextPage}</button>
+    {paging ? <span className="dshsql-muted">{text.refreshing}</span> : null}
+    {pageError === undefined ? null : <span role="alert" className="dshsql-error">{pageError}</span>}
+  </nav>
   const health = healthLine(overview, text, locale)
   const privateText = overview.rootPrivate === undefined
     ? text.overview.modePlain(overview.rootMode)
@@ -125,30 +160,31 @@ function OverviewTab({ overview, text, locale }: { overview: Overview | undefine
         <OneCard
           label={text.overview.cardSessions}
           value={count(overview.sessions, locale)}
-          note={overview.importing === 0
+          note={(overview.childSessions ?? 0) > 0 ? text.overview.childConversations(count(overview.childSessions!, locale)) : overview.eventsPending === true ? text.overview.checkPending : overview.importing === 0
             ? text.overview.allReady
             : text.overview.stillImporting(count(overview.importing, locale))}
         />
         <OneCard
           label={text.overview.cardEvents}
-          value={count(overview.events, locale)}
+          value={overview.eventsPending === true ? '—' : count(overview.events, locale)}
           note={text.overview.acrossSessions(count(overview.sessions, locale))}
         />
         <OneCard
           label={text.overview.cardSpace}
           value={fileSizeText(overview.databaseBytes)}
-          note={text.overview.databaseNote(fileSizeText(overview.databaseBytes), fileSizeText(overview.walBytes))}
+          note={overview.backends === undefined ? text.overview.databaseNote(fileSizeText(overview.databaseBytes), fileSizeText(overview.walBytes)) : `SQLite ${fileSizeText(overview.backends.sqliteBytes)} · JSONL ${fileSizeText(overview.backends.jsonlBytes)} · WAL ${fileSizeText(overview.walBytes)}`}
         />
         <OneCard
           label={text.overview.cardDamaged}
-          value={count(overview.damaged, locale)}
-          note={overview.damaged === 0 ? text.overview.nothingDamaged : text.overview.seeTable}
+          value={overview.eventsPending === true ? '—' : count(overview.damaged, locale)}
+          note={overview.eventsPending === true ? text.overview.checkPending : overview.damaged === 0 ? text.overview.nothingDamaged : text.overview.seeTable}
         />
       </div>
 
       <div className="dshsql-overview-grid">
         <section className="dshsql-panel">
           <h2 className="dshsql-section-title">{text.overview.usageTitle}</h2>
+          {total > 0 ? navigation : null}
           {overview.usage.length === 0
             ? <div className="dshsql-empty">{text.overview.noSessions}</div>
             : (
@@ -163,35 +199,18 @@ function OverviewTab({ overview, text, locale }: { overview: Overview | undefine
                     </tr>
                   </thead>
                   <tbody>
-                    {overview.usage.map((row) => (
-                      <tr key={row.id}>
-                        <td>
-                          <span className="dshsql-usage-title" title={row.title ?? row.id}>
-                            {row.title === undefined || row.title === '' ? text.overview.untitled : row.title}
-                          </span>
-                          {row.problem === undefined
-                            ? null
-                            : <div className="dshsql-row-problem dshsql-wrap">{row.problem}</div>}
-                        </td>
-                        <td className="dshsql-num">{count(row.eventCount, locale)}</td>
-                        <td className="dshsql-num">{fileSizeText(row.sizeBytes)}</td>
-                        <td>
-                          <div className="dshsql-usage-track">
-                            <span style={{ width: share(row, overview.databaseBytes) }} />
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    <UsageRows rows={overview.usage} totalBytes={overview.databaseBytes} text={text} locale={locale} onMissing={() => loadPage(offset)} />
                   </tbody>
                 </table>
               </div>
             )}
+          {total > 0 ? navigation : null}
         </section>
 
         <section className="dshsql-panel">
           <h2 className="dshsql-section-title">{text.overview.configTitle}</h2>
           <dl className="dshsql-kv">
-            <KeyRow label={text.overview.format} value={text.overview.layoutVersion(overview.schemaVersion)} />
+            <KeyRow label={text.overview.format} value={overview.backends === undefined ? text.overview.layoutVersion(overview.schemaVersion) : 'SQLite + JSONL'} />
             <KeyRow
               label={text.overview.journal}
               value={`${overview.journalMode.toUpperCase()} / ${overview.synchronous}`}
@@ -297,7 +316,6 @@ export function ConsolePage() {
     { value: 'overview', label: text.nav.overview },
     { value: 'transfer', label: text.nav.transfer },
     { value: 'metrics', label: text.nav.metrics },
-    { value: 'diagnostics', label: text.nav.diagnostics },
     { value: 'settings', label: text.nav.settings },
   ]
 
@@ -370,14 +388,6 @@ export function ConsolePage() {
           </section>
           <section
             role="tabpanel"
-            id="dshsql-panel-diagnostics"
-            aria-labelledby="dshsql-tab-diagnostics"
-            hidden={view !== 'diagnostics'}
-          >
-            {view === 'diagnostics' ? <DiagnosticsTab text={text} locale={locale} /> : null}
-          </section>
-          <section
-            role="tabpanel"
             id="dshsql-panel-settings"
             aria-labelledby="dshsql-tab-settings"
             hidden={view !== 'settings'}
@@ -404,7 +414,7 @@ export function ConsolePage() {
         <span>{footer === undefined ? '—' : fileSizeText(footer.bytes)}</span>
         <span>{footer === undefined ? '—' : `WAL ${fileSizeText(footer.wal)}`}</span>
         <span className="dshsql-spacer" />
-        <span>{text.footer.storage}</span>
+        <span>{overview?.backends === undefined ? text.footer.storage : 'SQLite + JSONL'}</span>
       </footer>
     </div>
   )

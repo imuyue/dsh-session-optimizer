@@ -1,0 +1,4 @@
+backend,mb,note
+jsonl_zstd,40.9,session.v4.jsonl.zstd
+sqlite_plain,155.8,one row per event without event_chunk
+sqlite_chunked,24.9,512 KiB zstd frames (6.57x smaller than plain)

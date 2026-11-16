@@ -45,10 +45,17 @@ import { SessionBackendCatalog, type SessionBackendId } from './catalog.ts'
 import { type LoadedHeader, type LoadedSession, type SqliteSettings } from './database.ts'
 import { recordDiagnostic } from './diagnostics.ts'
 import { registerConsole, type ConsoleConfig } from './console.ts'
+import { PerformanceController } from './performance.ts'
+import { PreviewReader } from './history-preview.ts'
+import { createPerformanceTool, type PerformanceToolRegistry } from './performance-tool.ts'
+import { PAGE_TRANSFER_POLICY, registerPageTransferPolicy } from './page-transfer.ts'
 import { InlineExecutor, type StorageExecutor } from './executor.ts'
 import { databasePath, decodeSegment, encodeSegment, sessionDir } from './format.ts'
 import { SessionWriteLease } from './lease.ts'
 import { attachMigrationJournal } from './migrate.ts'
+import { installMigrationRuntime } from './migration-runtime.ts'
+import { cloneWorkspaceAttacher, readWorkspaceMemberships, type MigrationWorkspaceRegistry } from './migration-workspace.ts'
+import { createMigrationHistoryTool } from './migration-history-tool.ts'
 import { MetricsRegistry } from './metrics.ts'
 import { attachMetricsJournal, detachMetricsJournal } from './metrics-journal.ts'
 import {
@@ -864,9 +871,30 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // headless profile) there is nothing to answer, and the backend stands alone.
   // Not awaited on purpose: a profile that never mounts `connection` would
   // otherwise leave this apply pending forever.
+  let consoleTarget = target
+  // A separately mounted performance add-on may already own this process-wide
+  // face. Treat any own value (including an unknown descriptor) as occupied;
+  // storage and the original console remain independent of optional controls.
+  if (target?.preferences !== undefined && !Object.hasOwn(globalThis, PAGE_TRANSFER_POLICY)) {
+    const performance = new PerformanceController(target.preferences.host, {
+      historyWindow: { supported: true, reason: 'Bounded read-only preview and optional raw JSON page transport; complete recovery and validation remain unchanged.' },
+      virtualChat: { supported: true, reason: 'First-follow window on a compatible exact-version Client hook; complete projections and later history paging remain official.' },
+    })
+    ctx.effect(() => registerPageTransferPolicy(() => performance.read().effective.historyWindow), `${name} page transport policy`)
+    const preview = new PreviewReader(target.root, target.settings)
+    ctx.inject(['tools'], (toolCtx) => {
+      const tools = toolCtx.get('tools') as PerformanceToolRegistry | undefined
+      if (tools === undefined) return
+      toolCtx.effect(function* () { yield tools.register(createPerformanceTool(performance)) }, `${name} performance controls tool`)
+    })
+    consoleTarget = { ...target, performance, historyPreview: preview }
+    ctx.effect(function* () {
+      yield async () => { performance.dispose(); await preview.close() }
+    }, `${name} optional performance paths`)
+  }
   ctx.inject(['connection'], (consoleCtx) => {
-    if (target === undefined) return
-    registerConsole(consoleCtx, target)
+    if (consoleTarget === undefined) return
+    registerConsole(consoleCtx, consoleTarget)
   })
   if (!config.ownSearch) return
   // Imported only when a profile asks for it: the query package belongs to the
@@ -958,7 +986,7 @@ async function mountStandalone(
     yield async () => {
       // The journal writes through the registry, which outlives the storage
       // executor, so it is flushed before the executor teardown drains handles.
-      await detachMetricsJournal()
+      if (instance !== undefined) await detachMetricsJournal(instance.metrics)
       await instance?.closeStorage()
     }
     const tracker = new SqliteBackendTracker(name)
@@ -977,10 +1005,7 @@ async function mountStandalone(
   scheduleWarmUp(ctx, instance, config)
   if (instance === undefined) return undefined
   const formats = formatsOf(config)
-  // The latency panel claims a five-minute window; without this the window starts
-  // empty on every restart and an operator reopening the page sees "no samples"
-  // right after a load that took a second. Restored samples are filtered to the
-  // window, so nothing is invented.
+  // Restore bounded measurement history before exposing the latency panel.
   await attachMetricsJournal(instance.metrics, stateDirectoryOf(config))
   // Created here rather than in the console so the saved switches are already in
   // force for the mount itself: `createPreferencesHost` applies what it reads,
@@ -1016,6 +1041,7 @@ async function mountHybrid(
       `${name}: hybrid mode needs jsonlRoot; point it at the JSONL sessions directory the profile already uses`,
     )
   }
+  const prepareMigrationSession = installMigrationRuntime(ctx)
   let jsonl: unknown
   try {
     jsonl = await import('@deepseek-ai/dsh-session-persistence-jsonl')
@@ -1053,7 +1079,7 @@ async function mountHybrid(
     // Disposed last, like the standalone path: the SQLite member must finish
     // draining through its executor before the executor goes away.
     yield async () => {
-      await detachMetricsJournal()
+      if (sqliteInstance !== undefined) await detachMetricsJournal(sqliteInstance.metrics)
       await sqliteInstance?.closeStorage()
     }
     // The tracker must be installed on the isolated scope the member runs in:
@@ -1105,6 +1131,7 @@ async function mountHybrid(
 
   // Constructing the router registers it on the real `sessionPersistence` key.
   new HybridSessionPersistence(ctx, catalog, backends, routerConfig)
+  ctx.inject(['tools'], toolCtx => { toolCtx.effect(() => (toolCtx as unknown as { tools: PerformanceToolRegistry }).tools.register(createMigrationHistoryTool())) })
   // A format switch has to reach the router, not just this backend: the router is
   // what decides where a conversation nobody routed yet is created. It holds the
   // same object, and `create()` reads the field per call, so a write here is
@@ -1145,10 +1172,13 @@ async function mountHybrid(
     ...console,
     preferences: { host: preferences, formats },
     about: pluginAbout,
+    workspaceMemberships: ids => readWorkspaceMemberships(() => ctx.get('workspaceRegistry') as unknown as MigrationWorkspaceRegistry | undefined, ids),
     migrations: {
+      prepareSession: prepareMigrationSession,
+      attachClone: cloneWorkspaceAttacher(() => ctx.get('workspaceRegistry') as unknown as MigrationWorkspaceRegistry | undefined),
       catalog,
       sqlite: { id: 'sqlite', root: console.root, persistence: sqliteMember },
-      jsonl: { id: 'jsonl', root: resolve(config.jsonlRoot), persistence: jsonlMember },
+      jsonl: { id: 'jsonl', root: resolve(config.jsonlRoot), persistence: jsonlMember, compression: 'zstd' },
     },
   }
 }

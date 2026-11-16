@@ -43,7 +43,9 @@ describe('the latency journal', () => {
     const written = await journalOf(directory)
     expect(written.version).toBe(1)
     expect(written.samples).toHaveLength(3)
-    expect(statSync(join(directory, LATENCY_JOURNAL_FILENAME)).mode & 0o777).toBe(0o600)
+    if (process.platform !== 'win32') {
+      expect(statSync(join(directory, LATENCY_JOURNAL_FILENAME)).mode & 0o777).toBe(0o600)
+    }
 
     const second = new MetricsRegistry()
     const restored = await attachMetricsJournal(second, directory)
@@ -54,7 +56,7 @@ describe('the latency journal', () => {
     expect(snapshot.ops.find((series) => series.op === 'read')?.count).toBe(2)
   })
 
-  it('drops samples that have already left the window instead of resurrecting them', async () => {
+  it('retains older measurements without counting them in the rolling window', async () => {
     const directory = await makeDirectory()
     const stale = Date.now() - 10 * 60_000
     await writeFile(
@@ -64,8 +66,9 @@ describe('the latency journal', () => {
     )
 
     const registry = new MetricsRegistry()
-    expect(await attachMetricsJournal(registry, directory)).toBe(0)
+    expect(await attachMetricsJournal(registry, directory)).toBe(1)
     expect(registry.snapshot().count).toBe(0)
+    expect(registry.historySnapshot().count).toBe(1)
   })
 
   it('ignores a journal it cannot understand', async () => {

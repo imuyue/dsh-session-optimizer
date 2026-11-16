@@ -214,46 +214,42 @@ export class HybridSessionPersistence extends SessionPersistence {
    * twice.
    */
   async list(options?: SessionPersistenceListOptions): Promise<SessionPersistenceSnapshot[]> {
-    const kept = new Map<string, SessionPersistenceSnapshot>()
+    const initial = new Map(this.catalog.list())
+    const holders = new Map<string, Map<SessionBackendId, SessionPersistenceSnapshot>>()
     for (const backendId of this.config.preference) {
       const backend = this.backends.get(backendId)
       if (backend === undefined) continue
       for (const snapshot of await backend.persistence.list(options)) {
         const key = String(snapshot.header.id)
-        if (kept.has(key)) continue
-        const routed = this.catalog.backendOf(snapshot.header.id)
-        // A second copy of a routed session belongs to whichever backend the
-        // catalog names; skip it here so the picker shows the conversation once.
-        if (routed !== undefined && routed !== backendId) continue
-        kept.set(key, snapshot)
+        let copies = holders.get(key)
+        if (copies === undefined) holders.set(key, copies = new Map())
+        copies.set(backendId, snapshot)
       }
     }
-    await this.forgetVanished(kept)
-    return [...kept.values()]
-  }
-
-  /**
-   * Drop routes whose session no longer exists on any backend.
-   *
-   * A session deleted outside this plugin — `rm -rf` on the directory, a restore
-   * from a backup that predates it — leaves a route pointing at nothing. Nothing
-   * breaks immediately (`open` probes and reports the id as unknown), but the
-   * catalog is what the console reads to say which backend owns what, so a stale
-   * entry is a lie the panel would repeat. Listing is the moment the answer is
-   * already in hand, so the repair costs one comparison per route.
-   */
-  private async forgetVanished(listed: Map<string, SessionPersistenceSnapshot>): Promise<void> {
-    let dropped = 0
-    for (const [id] of this.catalog.list()) {
-      if (listed.has(id)) continue
-      if (!this.catalog.forget(id)) continue
-      dropped += 1
+    // Enumerations can overlap create/restore. Confirm absence before pruning,
+    // and do not reconcile entries created or replaced after this scan began.
+    for (const [id, entry] of initial) {
+      if (holders.has(id) || this.catalog.get(id) !== entry) continue
+      const copies = new Map<SessionBackendId, SessionPersistenceSnapshot>()
+      for (const backendId of this.config.preference) {
+        const found = await lookUp(this.backend(backendId), id as SessionId, options)
+        if (found !== undefined) copies.set(backendId, found)
+      }
+      if (copies.size > 0) holders.set(id, copies)
     }
-    if (dropped === 0) return
-    this.ctx.logger.info(
-      `session-persistence-hybrid: dropped ${String(dropped)} route(s) whose session is gone`,
-    )
+    options?.signal?.throwIfAborted()
+    const kept: SessionPersistenceSnapshot[] = []
+    for (const [id, copies] of holders) {
+      const routed = this.catalog.backendOf(id)
+      const chosen = routed !== undefined && copies.has(routed) ? routed : copies.keys().next().value!
+      kept.push(copies.get(chosen)!)
+      if (this.catalog.get(id) === initial.get(id) && routed !== chosen) this.catalog.route(id, chosen)
+    }
+    for (const [id, entry] of initial) {
+      if (!holders.has(id) && this.catalog.get(id) === entry) this.catalog.forget(id)
+    }
     await this.persistCatalog()
+    return kept
   }
 
   // ------------------------------------------------------------------ internals

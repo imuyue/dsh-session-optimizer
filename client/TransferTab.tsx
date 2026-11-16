@@ -5,10 +5,10 @@
  * which backend a conversation lives on, and therefore what the session list
  * shows:
  *
- * - 「转换并切换存储」keeps the session id, so the conversation stays one
+ * - 「转换后覆盖原对话」keeps the session id, so the conversation stays one
  *   conversation and simply starts being read from the other backend;
- * - 「创建副本」mints a new id, so the session list grows a second, separately
- *   openable conversation carrying the same events.
+ * - 「转换后创建新对话」mints a new id and preserves the original history,
+ *   then appends the new conversation's copy title.
  *
  * The view asks the Host what the machine has (`/roots`), lists the source
  * root's conversations with their titles (`/source`), and posts only the ids the
@@ -21,17 +21,17 @@
  * @module dsh-session-optimizer/client/TransferTab
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { fetchMigrations, fetchRoots, fetchSource, startMigration } from './api.ts'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { clearMigrations, fetchMigrations, fetchRoots, fetchSource, startMigration } from './api.ts'
 import type { Text } from './i18n.ts'
+import { TransferSessionRows } from './TransferSessionRows.tsx'
 import { announceLibraryChanged } from './library.ts'
+import { replaceTransferPage, nextTransferOffset, resetTransferPages, type TransferPageState } from './transfer-pagination.ts'
+import { currentSourceListing, targetBackend } from './transfer-contract.ts'
 import type {
   MigrationItem,
   MigrationJob,
   RootCandidate,
-  SourceListing,
-  SourceSession,
 } from './types.ts'
 
 type Direction = 'jsonl_to_sqlite' | 'sqlite_to_jsonl'
@@ -44,10 +44,14 @@ const DIRECTIONS: ReadonlyArray<{ value: Direction; label: string }> = [
 
 const POLL_MS = 700
 /** What the first pass asks for. A root with more rows grows by one page per click. */
-const PAGE_SIZE = 200
+const PAGE_SIZE = 50
 
 function message(failure: unknown): string {
   return failure instanceof Error ? failure.message : String(failure)
+}
+
+function titleOf(row: { title?: string | undefined }, text: Text): string {
+  return row.title === undefined || row.title === '' ? text.overview.untitled : row.title
 }
 
 function stamp(ms: number | undefined, locale: string): string {
@@ -60,14 +64,10 @@ function tally(job: MigrationJob): { done: number; failed: number; total: number
   let done = 0
   let failed = 0
   for (const item of items) {
-    if (item.status === 'migrated') done += 1
+    if (item.status === 'migrated' || (item.status === 'skipped' && item.error === undefined)) done += 1
     else if (item.status === 'failed') failed += 1
   }
   return { done, failed, total: items.length }
-}
-
-function titleOf(row: { title?: string | undefined }, text: Text): string {
-  return row.title === undefined || row.title === '' ? text.overview.untitled : row.title
 }
 
 /**
@@ -90,64 +90,17 @@ function pickRoot(candidates: readonly RootCandidate[], configured: string | und
   return fullest?.path ?? exact?.path
 }
 
-/** One row of the source listing, with its tick box. */
-function SessionRow({
-  session,
-  targetLabel,
-  checked,
-  onToggle,
-  text,
-  locale,
-}: {
-  session: SourceSession
-  /** What the other backend is called, for the «already there» mark. */
-  targetLabel: string
-  checked: boolean
-  onToggle: () => void
-  text: Text
-  locale: string
-}) {
-  return (
-    <tr data-clickable="true" data-selected={checked} onClick={onToggle}>
-      <td style={{ width: '40px' }}>
-        <input
-          className="dshsql-check"
-          type="checkbox"
-          checked={checked}
-          onChange={onToggle}
-          onClick={(event: { stopPropagation: () => void }) => { event.stopPropagation() }}
-          aria-label={text.transfer.selectOne(session.id)}
-        />
-      </td>
-      <td>
-        <div className="dshsql-transfer-title">
-          {titleOf(session, text)}
-          {session.inTarget === true
-            ? <span className="dshsql-badge">{text.transfer.alreadyIn(targetLabel)}</span>
-            : null}
-        </div>
-        <div className="dshsql-mono dshsql-muted dshsql-small dshsql-wrap">{session.id}</div>
-        {session.problem === undefined
-          ? null
-          : <div className="dshsql-row-problem dshsql-wrap">{session.problem}</div>}
-      </td>
-      <td className="dshsql-num">{session.eventCount.toLocaleString(locale)}</td>
-      <td className="dshsql-num">{fileSizeText(session.sizeBytes)}</td>
-      <td className="dshsql-mono dshsql-muted">{stamp(session.createdAt, locale)}</td>
-    </tr>
-  )
-}
-
 /**
  * What one run did to the session list.
  *
  * The card names conversations, not files: a reader cares that 「排位赛」now opens
  * from SQLite, or that it exists twice, and not where the bytes sit.
  */
-function JobCard({ job, text, locale }: { job: MigrationJob; text: Text; locale: string }) {
+function JobCard({ job, text, locale, onClear, clearing, canClear }: { job: MigrationJob; text: Text; locale: string; onClear: () => void; clearing: boolean; canClear: boolean }) {
   const counts = tally(job)
   const items = job.report?.items ?? []
-  const tone = job.status === 'completed' ? 'success' : job.status === 'running' ? 'warning' : 'danger'
+  const problems = items.filter(item => item.status === 'failed' || item.error !== undefined)
+  const tone = job.status === 'completed' ? (problems.length === 0 ? 'success' : 'warning') : job.status === 'running' ? 'warning' : 'danger'
   const elapsed = job.finishedAt === undefined
     ? undefined
     : ((job.finishedAt - job.startedAt) / 1000).toFixed(1)
@@ -157,13 +110,14 @@ function JobCard({ job, text, locale }: { job: MigrationJob; text: Text; locale:
     : job.status === 'running'
       ? text.transfer.statusRunning
       : text.transfer.statusFailed
-  const outcome = job.error === undefined
-    ? (failed.length === 0 ? text.transfer.verified : text.transfer.failedCount(failed.length))
+  const outcome = job.error === undefined && job.status !== 'running'
+    ? (problems.length === 0 ? text.transfer.verified : failed.length > 0 ? text.transfer.failedCount(failed.length) : undefined)
     : undefined
   return (
     <div className="dshsql-job">
       <div className="dshsql-section-head">
         <h2 className="dshsql-section-title">{text.transfer.recent}</h2>
+        <button type="button" className="dshsql-button" onClick={onClear} disabled={clearing || !canClear}>{text.transfer.clearHistory}</button>
         <span className="dshsql-spacer" />
         <span className="dshsql-muted">{stamp(job.startedAt, locale)}</span>
         <span className="dshsql-status">
@@ -186,10 +140,11 @@ function JobCard({ job, text, locale }: { job: MigrationJob; text: Text; locale:
         <div className="dshsql-progress" data-tone={failed.length === 0 ? undefined : 'danger'}>
           <span style={{ width: `${counts.total === 0 ? 0 : (counts.done / counts.total) * 100}%` }} />
         </div>
+        {job.notice === undefined ? null : <div className="dshsql-small">{job.notice}</div>}
         {job.error === undefined ? null : <div className="dshsql-error dshsql-small">{job.error}</div>}
-        {failed.length === 0 ? null : (
+        {problems.length === 0 ? null : (
           <ul className="dshsql-small dshsql-wrap">
-            {failed.map((item: MigrationItem) => (
+            {problems.map((item: MigrationItem) => (
               <li key={item.sourceSession} className="dshsql-error">
                 {titleOf(item, text)}：{item.error ?? text.transfer.failedFallback}
               </li>
@@ -216,13 +171,19 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
   const [sourceRoot, setSourceRoot] = useState<string | undefined>(undefined)
   const [sqliteRoot, setSqliteRoot] = useState<string | undefined>(undefined)
 
-  const [listing, setListing] = useState<SourceListing | undefined>(undefined)
-  const [limit, setLimit] = useState(PAGE_SIZE)
+  const [pages, setPages] = useState<TransferPageState>({ generation: 0, listing: undefined })
+  const pagesRef = useRef(pages)
+  const sourceAbort = useRef<AbortController | undefined>(undefined)
+  const listing = currentSourceListing(pages.listing, direction === 'jsonl_to_sqlite' ? 'jsonl' : 'sqlite', sourceRoot)
   const [query, setQuery] = useState('')
+  const [search, setSearch] = useState('')
+  useEffect(() => { const timer = setTimeout(() => { setSearch(query) }, 250); return () => { clearTimeout(timer) } }, [query])
   const [listingBusy, setListingBusy] = useState(false)
 
   const [picked, setPicked] = useState<string[]>([])
   const [jobs, setJobs] = useState<MigrationJob[]>([])
+  const [clearing, setClearing] = useState(false)
+  const historyEpoch = useRef(0)
   const [available, setAvailable] = useState(true)
   const [settled, setSettled] = useState(0)
 
@@ -232,9 +193,8 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
   const [reload, setReload] = useState(0)
 
   const sourceBackend = direction === 'jsonl_to_sqlite' ? 'jsonl' : 'sqlite'
-  // Where the picks land, named the way the badge says it: a reader looking at a
-  // JSONL row wants to know it is already in SQLite, not the other way round.
-  const targetLabel = sourceBackend === 'jsonl' ? 'SQLite' : 'JSONL'
+  const targetBackendId = targetBackend(direction)
+  const targetLabel = targetBackendId === 'sqlite' ? 'SQLite' : 'JSONL'
 
   // The machine's roots: a filesystem walk per candidate, done once per mount and
   // again when the operator rescans or a run settles. It is deliberately not part
@@ -254,20 +214,23 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
   // Job history: a list read, cheap enough to repeat while something runs.
   useEffect(() => {
     const abort = new AbortController()
+    const epoch = historyEpoch.current
+    let timer: ReturnType<typeof setTimeout> | undefined
     fetchMigrations(abort.signal)
       .then((migrations) => {
+        if (abort.signal.aborted || epoch !== historyEpoch.current) return
         setAvailable(migrations.available)
         setJobs(migrations.jobs)
         setSqliteRoot(migrations.sqliteRoot)
         if (migrations.jobs.some((job) => job.status === 'running')) {
-          window.setTimeout(() => { setTick((value) => value + 1) }, POLL_MS)
+          timer = window.setTimeout(() => { setTick((value) => value + 1) }, POLL_MS)
         }
       })
       .catch((failure: unknown) => {
-        if (abort.signal.aborted) return
+        if (abort.signal.aborted || epoch !== historyEpoch.current) return
         setError(message(failure))
       })
-    return () => { abort.abort() }
+    return () => { abort.abort(); if (timer !== undefined) clearTimeout(timer) }
   }, [tick, settled])
 
   const candidates = useMemo(
@@ -289,44 +252,60 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
 
   const refresh = useCallback(() => { setReload((value) => value + 1) }, [])
 
-  useEffect(() => {
-    if (sourceRoot === undefined) {
-      setListing(undefined)
-      return
-    }
+  const loadSourcePage = useCallback((offset: number, generation: number): void => {
+    if (sourceRoot === undefined) return
+    sourceAbort.current?.abort()
     const abort = new AbortController()
+    sourceAbort.current = abort
     setListingBusy(true)
     fetchSource(
       {
         backend: sourceBackend,
         root: sourceRoot,
-        offset: 0,
-        limit,
-        ...(query.trim() === '' ? {} : { query: query.trim() }),
-        ...(reload === 0 && settled === 0 ? {} : { refresh: true }),
+        offset,
+        limit: PAGE_SIZE,
+        ...(search.trim() === '' ? {} : { query: search.trim() }),
+        ...(offset === 0 && (reload !== 0 || settled !== 0) ? { refresh: true } : {}),
       },
       abort.signal,
     )
       .then((next) => {
-        setListing(next)
+        if (abort.signal.aborted || generation !== pagesRef.current.generation) return
+        if (next.backend !== sourceBackend || next.root !== sourceRoot) return
+        const updated = replaceTransferPage(pagesRef.current, generation, next)
+        pagesRef.current = updated
+        setPages(updated)
         setError(undefined)
       })
       .catch((failure: unknown) => {
-        if (abort.signal.aborted) return
-        setListing(undefined)
+        if (abort.signal.aborted || generation !== pagesRef.current.generation) return
         setError(message(failure))
       })
-      .finally(() => { if (!abort.signal.aborted) setListingBusy(false) })
-    return () => { abort.abort() }
-  }, [sourceRoot, sourceBackend, limit, query, reload, settled])
+      .finally(() => {
+        if (!abort.signal.aborted && generation === pagesRef.current.generation) setListingBusy(false)
+      })
+  }, [sourceRoot, sourceBackend, search, reload, settled])
 
-  // A new listing is a new set of ids; keep only ticks that still exist.
   useEffect(() => {
-    const present = new Set((listing?.sessions ?? []).map((session) => session.id))
-    setPicked((current) => current.filter((id) => present.has(id)))
-  }, [listing])
+    sourceAbort.current?.abort()
+    const reset = resetTransferPages(pagesRef.current)
+    pagesRef.current = reset
+    setPages(reset)
+    setPicked([])
+    setListingBusy(false)
+    loadSourcePage(0, reset.generation)
+    return () => { sourceAbort.current?.abort() }
+  }, [loadSourcePage])
 
   const current = jobs.at(-1)
+  const clearHistory = (): void => {
+    if (clearing) return
+    historyEpoch.current++
+    setClearing(true)
+    void clearMigrations().then(() => { setJobs(previous => previous.filter(job => job.status === 'running')) })
+      .catch((failure: unknown) => { setError(message(failure)) })
+      .finally(() => { setClearing(false); setTick(value => value + 1) })
+  }
   const rows = listing?.sessions ?? []
   const total = listing?.total ?? 0
   const allOnPage = rows.length > 0 && rows.every((session) => picked.includes(session.id))
@@ -375,13 +354,22 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
     if (!changed) return
     setSettled((value) => value + 1)
     refresh()
-    announceLibraryChanged()
+    announceLibraryChanged(current?.report)
   }, [changed, current?.id, refresh])
 
   // The button is only enabled with a selection (as in the design), so the hint
   // must not promise that an empty selection converts the whole directory: the
   // server accepts that request, but nothing in this view can send it.
   const hint = unselected ? text.transfer.hintNone : text.transfer.hintSome(picked.length)
+  const offset = listing?.offset ?? 0
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const pager = (
+    <nav className="dshsql-section-head" aria-label={text.transfer.pageOf(Math.floor(offset / PAGE_SIZE) + 1, pageCount)}>
+      <button type="button" className="dshsql-btn dshsql-btn-sm" disabled={listingBusy || offset === 0} onClick={() => { loadSourcePage(Math.max(0, offset - PAGE_SIZE), pagesRef.current.generation) }}>{text.transfer.previousPage}</button>
+      <span className="dshsql-muted">{text.transfer.pageOf(Math.floor(offset / PAGE_SIZE) + 1, pageCount)}</span>
+      <button type="button" className="dshsql-btn dshsql-btn-sm" disabled={listingBusy || listing === undefined || nextTransferOffset(pages) === undefined} onClick={() => { const next = nextTransferOffset(pagesRef.current); if (next !== undefined) loadSourcePage(next, pagesRef.current.generation) }}>{text.transfer.nextPage}</button>
+    </nav>
+  )
 
   return (
     <>
@@ -423,17 +411,7 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
             : text.transfer.conversations(total.toLocaleString(locale))}
         </span>
         <span className="dshsql-spacer" />
-        {total > rows.length && listingBusy === false
-          ? (
-            <button
-              type="button"
-              className="dshsql-btn dshsql-btn-sm"
-              onClick={() => { setLimit((value) => value + PAGE_SIZE) }}
-            >
-              {text.transfer.showMore}
-            </button>
-          )
-          : null}
+        {pager}
       </div>
 
       {rows.length === 0
@@ -465,22 +443,14 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    targetLabel={targetLabel}
-                    checked={picked.includes(session.id)}
-                    onToggle={() => { toggle(session.id) }}
-                    text={text}
-                    locale={locale}
-                  />
-                ))}
+                <TransferSessionRows key={pages.generation} rows={rows} backend={sourceBackend} root={listing?.root ?? sourceRoot ?? ''} targetLabel={targetLabel} picked={picked} onToggle={toggle} text={text} locale={locale} />
               </tbody>
             </table>
           </div>
         )}
 
+      {pager}
+      <div className="dshsql-muted dshsql-small">{text.transfer.linkedChildren}</div>
       <div className="dshsql-action-bar">
         <label className="dshsql-radio">
           <input
@@ -515,7 +485,7 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
           type="button"
           className="dshsql-btn"
           data-primary="true"
-          disabled={starting || !available || sourceRoot === undefined || picked.length === 0}
+          disabled={starting || !available || sourceRoot === undefined || listing === undefined || picked.length === 0}
           onClick={submit}
         >
           {starting
@@ -531,7 +501,7 @@ export function TransferTab({ text, locale }: { text: Text; locale: string }) {
 
       {current === undefined
         ? <div className="dshsql-empty-note">{text.transfer.noRun}</div>
-        : <JobCard job={current} text={text} locale={locale} />}
+        : <JobCard job={current} text={text} locale={locale} onClear={clearHistory} clearing={clearing} canClear={jobs.some(job => job.status !== 'running')} />}
     </>
   )
 }

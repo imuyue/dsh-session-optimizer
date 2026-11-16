@@ -14,6 +14,7 @@
  * the agent loop, which is exactly the stall this whole design exists to avoid.
  */
 import { Worker } from 'node:worker_threads'
+import { workerRuntimeExecArgv } from './worker-runtime.ts'
 
 import type { SessionHeader, SessionEvent } from '@deepseek-ai/dsh-session'
 
@@ -21,6 +22,7 @@ import type { LoadedHeader, LoadedSession, LogPage, SqliteSettings } from './dat
 import { fromWireError, toWireError, type WireRequest, type WireResponse } from './rpc.ts'
 import { PAGED_MIN_EVENTS, assemblePaged, type HeaderBatchEntry, type StorageExecutor } from './executor.ts'
 import type { SearchHitRow } from './database.ts'
+import { currentPageTransferFormat } from './page-transfer.ts'
 
 interface Pending {
   resolve: (value: unknown) => void
@@ -82,7 +84,7 @@ export class WorkerExecutor implements StorageExecutor {
     const source = workerSource()
     const worker = new Worker(source.url, {
       workerData: { preparedSessionCacheSize: this.preparedSessionCacheSize },
-      execArgv: source.execArgv,
+      execArgv: workerRuntimeExecArgv(source.execArgv),
     })
     worker.on('message', (response: WireResponse) => {
       const entry = this.pending.get(response.rid)
@@ -188,7 +190,7 @@ export class WorkerExecutor implements StorageExecutor {
   }
 
   readPage(path: string, settings: SqliteSettings, from: number, to: number): Promise<LogPage | undefined> {
-    return this.call<LogPage | undefined>('readPage', [path, settings, from, to])
+    return this.call<LogPage | undefined>('readPage', [path, settings, from, to, currentPageTransferFormat()])
   }
 
   trustedLength(path: string, settings: SqliteSettings): Promise<number | undefined> {

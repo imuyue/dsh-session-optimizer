@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-optimizer",
   "version": "0.1.0",
-  "description": "SQLite session persistence backend for DeepSeek Harness: one database per session, append-only event log behind the official SessionPersistence seam.",
+  "description": "SQLite session backend for DSH: one database per conversation, with window reads, zstd chunking, migration and an inspection console.",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -21,12 +21,34 @@
     "./client": {
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/imuyue/dsh-session-optimizer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/imuyue/dsh-session-optimizer/issues"
+  },
+  "homepage": "https://github.com/imuyue/dsh-session-optimizer#readme",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "session",
+    "sqlite",
+    "persistence",
+    "zstd"
+  ],
   "files": [
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "README.en.md",
+    "LICENSE",
+    "locale/*.json",
+    "icon.svg"
   ],
   "dsh": {
     "bundle": {
@@ -56,9 +78,8 @@
     "@deepseek-ai/cordis": "~4.1.0",
     "@deepseek-ai/dsh-session": "0.2.2-rc.1",
     "@deepseek-ai/dsh-session-persistence": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-session-query": "0.2.2-rc.1"
-  },
-  "dependencies": {
+    "@deepseek-ai/dsh-session-query": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-app-boot": "0.2.2-rc.1",
     "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.2-rc.1",
     "@deepseek-ai/node-addon-system": "0.1.2",
     "@deepseek-ai/schemastery": "^3.19.0"
@@ -69,6 +90,8 @@
     "@deepseek-ai/dsh-session": "0.2.2-rc.1",
     "@deepseek-ai/dsh-session-persistence": "0.2.2-rc.1",
     "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.2-rc.1",
+    "@deepseek-ai/node-addon-system": "0.1.2",
+    "@deepseek-ai/schemastery": "3.19.0",
     "@types/node": "^24.10.1",
     "rolldown": "^1.2.16",
     "typescript": "^6.0.3",

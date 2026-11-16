@@ -35,6 +35,7 @@ const EXTERNAL = [
   '@deepseek-ai/cordis',
   '@deepseek-ai/schemastery',
   'zod',
+  '@deepseek-ai/dsh-api-workspace-controller',
   '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',

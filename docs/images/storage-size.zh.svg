@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="660.228906pt" height="263.632328pt" viewBox="0 0 660.228906 263.632328" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-16T16:15:55.485186</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.9, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 263.632328 
+L 660.228906 263.632328 
+L 660.228906 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 128.508906 202.367875 
+L 653.028906 202.367875 
+L 653.028906 41.591875 
+L 128.508906 41.591875 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 128.508906 202.367875 
+L 128.508906 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="m8d8f4c561d" d="M 0 0 
+L 0 3.5 
+" style="stroke: #64748b; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="128.508906" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="128.508906" y="217.361625" transform="rotate(-0 128.508906 217.361625)">0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 195.75506 202.367875 
+L 195.75506 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="195.75506" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="195.75506" y="217.361625" transform="rotate(-0 195.75506 217.361625)">25</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 263.001214 202.367875 
+L 263.001214 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="263.001214" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="263.001214" y="217.361625" transform="rotate(-0 263.001214 217.361625)">50</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 330.247368 202.367875 
+L 330.247368 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="330.247368" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="330.247368" y="217.361625" transform="rotate(-0 330.247368 217.361625)">75</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 397.493522 202.367875 
+L 397.493522 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="397.493522" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="397.493522" y="217.361625" transform="rotate(-0 397.493522 217.361625)">100</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 464.739675 202.367875 
+L 464.739675 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="464.739675" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="464.739675" y="217.361625" transform="rotate(-0 464.739675 217.361625)">125</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_13">
+      <path d="M 531.985829 202.367875 
+L 531.985829 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="531.985829" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="531.985829" y="217.361625" transform="rotate(-0 531.985829 217.361625)">150</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_15">
+      <path d="M 599.231983 202.367875 
+L 599.231983 41.591875 
+" clip-path="url(#p1bbf9ec728)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#m8d8f4c561d" x="599.231983" y="202.367875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="599.231983" y="217.361625" transform="rotate(-0 599.231983 217.361625)">175</text>
+     </g>
+    </g>
+    <g id="text_9">
+     <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="390.768906" y="231.441625" transform="rotate(-0 390.768906 231.441625)">体积（MB）</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_17"/>
+     <g id="text_10">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="125.008906" y="69.125743" transform="rotate(-0 125.008906 69.125743)">SQLite 512 KiB 分块</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_18"/>
+     <g id="text_11">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="125.008906" y="125.776906" transform="rotate(-0 125.008906 125.776906)">JSONL + zstd（官方形态）</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_19"/>
+     <g id="text_12">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="125.008906" y="182.428069" transform="rotate(-0 125.008906 182.428069)">SQLite 一行一事件</text>
+     </g>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 128.508906 202.367875 
+L 653.028906 202.367875 
+" style="fill: none; stroke: #e2e8f0; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 128.508906 81.757549 
+L 195.486075 81.757549 
+L 195.486075 48.899875 
+L 128.508906 48.899875 
+z
+" clip-path="url(#p1bbf9ec728)" style="fill: #2563eb"/>
+   </g>
+   <g id="text_13">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="202.210691" y="68.082618" transform="rotate(-0 202.210691 68.082618)">24.9 MB</text>
+   </g>
+   <g id="patch_5">
+    <path d="M 128.508906 138.408712 
+L 238.523614 138.408712 
+L 238.523614 105.551038 
+L 128.508906 105.551038 
+z
+" clip-path="url(#p1bbf9ec728)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_14">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="245.248229" y="124.733781" transform="rotate(-0 245.248229 124.733781)">40.9 MB</text>
+   </g>
+   <g id="patch_6">
+    <path d="M 128.508906 195.059875 
+L 547.586937 195.059875 
+L 547.586937 162.202201 
+L 128.508906 162.202201 
+z
+" clip-path="url(#p1bbf9ec728)" style="fill: #93b4f5"/>
+   </g>
+   <g id="text_15">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="554.311552" y="181.384944" transform="rotate(-0 554.311552 181.384944)">155.8 MB</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="128.508906" y="31.945315" transform="rotate(-0 128.508906 31.945315)">47,374 事件；分块后比官方 JSONL 还小 39%</text>
+   </g>
+   <g id="text_17">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="128.508906" y="17.591875" transform="rotate(-0 128.508906 17.591875)">同一会话的磁盘占用</text>
+   </g>
+  </g>
+  <g id="text_18">
+   <text style="font-size: 7.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="49.323306" y="254.567875" transform="rotate(-0 49.323306 254.567875)">测量环境：Windows / Node 24，DSH 0.2.2-rc.1，单机单会话；复现步骤见 docs/benchmarks.md</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p1bbf9ec728">
+   <rect x="128.508906" y="41.591875" width="524.52" height="160.776"/>
+  </clipPath>
+ </defs>
+</svg>

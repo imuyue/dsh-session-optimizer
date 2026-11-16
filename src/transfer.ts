@@ -22,11 +22,10 @@
  */
 
 import { createReadStream, existsSync } from 'node:fs'
-import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
+import { link, mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
-import { createInterface } from 'node:readline'
-import { createZstdDecompress } from 'node:zlib'
-import { Readable } from 'node:stream'
+import { StringDecoder } from 'node:string_decoder'
+import { readArtifactZstd } from './artifact-zstd.ts'
 import { Context } from '@deepseek-ai/cordis'
 import {
   SessionLogOffset,
@@ -177,7 +176,10 @@ export async function mountJsonl(root: string, suffix?: 'jsonl' | 'jsonl.zstd'):
     return {
       persistence,
       compression,
-      dispose: async () => { await ctx.fiber.dispose() },
+      dispose: async () => {
+        await ctx.fiber.dispose()
+        if (mounts.get(cacheKey) === created) mounts.delete(cacheKey)
+      },
     }
   })()
   mounts.set(cacheKey, created)
@@ -359,6 +361,8 @@ export interface JsonlArtifact {
 /** One session as the migration picker shows it, read without changing anything. */
 export interface JsonlSessionListing {
   readonly id: string
+  readonly origin?: 'subagent'
+  readonly parentSession?: string
   readonly title: string | undefined
   readonly eventCount: number
   readonly sizeBytes: number
@@ -377,16 +381,19 @@ export interface JsonlSessionListing {
  * choosing it). Titles come from the newest `session/title` in the same single
  * streaming pass that counts events.
  */
-export async function inspectJsonlSessions(root: string): Promise<readonly JsonlSessionListing[]> {
+export async function inspectJsonlSessions(root: string, onlyIds?: ReadonlySet<string>): Promise<readonly JsonlSessionListing[]> {
   const listed = await listJsonlSessionDirs(root)
   const found: JsonlSessionListing[] = []
   for (const entry of listed) {
-    const artifact = await findJsonlArtifact(root, decodeSegment(entry.directory) ?? entry.directory)
+    const id = decodeSegment(entry.directory) ?? entry.directory
+    if (onlyIds !== undefined && !onlyIds.has(id)) continue
+    const artifact = await findJsonlArtifact(root, id)
     const path = artifact?.path ?? entry.path
     const shape = await inspectJsonlArtifact(path)
     if (shape?.header === undefined) continue
     found.push({
       id: String(shape.header.id),
+      ...(shape.header.origin === 'subagent' ? { origin: 'subagent' as const, ...(shape.header.parentSession === undefined ? {} : { parentSession: String(shape.header.parentSession) }) } : {}),
       title: shape.title,
       eventCount: shape.eventCount,
       sizeBytes: artifact?.sizeBytes ?? 0,
@@ -466,8 +473,86 @@ export interface JsonlArtifactShape {
  * costs the same memory as a small one. Returns `undefined` only when the file
  * cannot be opened.
  */
+/** Own the entire read/decode chain, including errors after a consumer stops early. */
+async function* artifactLines(path: string): AsyncGenerator<string> {
+  const raw = path.endsWith('.zstd') ? undefined : createReadStream(path)
+  const input = raw ?? readArtifactZstd(path)
+  const decoder = new StringDecoder('utf8')
+  let pending = ''
+  try {
+    for await (const chunk of input) {
+      pending += decoder.write(chunk as Buffer)
+      let start = 0
+      for (;;) {
+        const end = pending.indexOf('\n', start)
+        if (end < 0) break
+        const line = pending.slice(start, end)
+        yield line.endsWith('\r') ? line.slice(0, -1) : line
+        start = end + 1
+      }
+      pending = pending.slice(start)
+    }
+    pending += decoder.end()
+    if (pending !== '') yield pending.endsWith('\r') ? pending.slice(0, -1) : pending
+  } finally {
+    // for-await return/break must not leave a paused decompressor/source alive.
+    raw?.destroy()
+  }
+}
+
+export async function readJsonlParent(path: string, id: string, signal?: AbortSignal): Promise<{ origin?: 'subagent'; parentSession?: string }> {
+  const raw = path.endsWith('.zstd') ? undefined : createReadStream(path)
+  const input = raw ?? readArtifactZstd(path), decoder = new StringDecoder('utf8')
+  let pending = '', bytes = 0
+  const parse = (line: string): { origin?: 'subagent'; parentSession?: string } => {
+    const value = JSON.parse(line) as Record<string, unknown>
+    if (value?.type !== 'session' || value.id !== id) throw new Error('session header identity disagrees with directory')
+    return value.origin === 'subagent'
+      ? { origin: 'subagent', ...(typeof value.parentSession === 'string' && value.parentSession.length <= 256 ? { parentSession: value.parentSession } : {}) }
+      : {}
+  }
+  try {
+    for await (const chunk of input) {
+      signal?.throwIfAborted()
+      const piece = (chunk as Buffer).subarray(0, 256 * 1024 - bytes); bytes += piece.length
+      pending += decoder.write(piece)
+      let end: number
+      while ((end = pending.indexOf('\n')) >= 0) {
+        const line = pending.slice(0,end); pending = pending.slice(end + 1)
+        if (line.trim() !== '') return parse(line)
+      }
+      if (bytes >= 256 * 1024) throw new Error('session header exceeds metadata budget')
+    }
+    pending += decoder.end(); signal?.throwIfAborted()
+    if (pending.trim() !== '') return parse(pending)
+    throw new Error('no readable session header')
+  } finally { raw?.destroy() }
+}
+
+export async function readJsonlTitle(path: string, id: string, signal?: AbortSignal): Promise<string | undefined> {
+  let title: string | undefined
+  let header = false
+  for await (const line of artifactLines(path)) {
+    signal?.throwIfAborted()
+    if (line.trim() === '') continue
+    if (!header) {
+      const value = JSON.parse(line) as Record<string, unknown>
+      if (value?.type !== 'session' || value.id !== id) throw new Error('session header identity disagrees with directory')
+      header = true
+      continue
+    }
+    if (!line.includes('session/title')) continue
+    const value: unknown = JSON.parse(line)
+    if (typeof value !== 'object' || value === null) continue
+    const event = value as { type?: unknown; data?: { title?: unknown } }
+    if (event.type === 'session/title' && typeof event.data?.title === 'string' && event.data.title !== '') title = event.data.title
+  }
+  signal?.throwIfAborted()
+  if (!header) throw new Error('no readable session header')
+  return title
+}
+
 export async function inspectJsonlArtifact(path: string): Promise<JsonlArtifactShape | undefined> {
-  const compressed = path.endsWith('.zstd')
   if (!existsSync(path)) return undefined
   const counts = new Map<string, number>()
   let eventCount = 0
@@ -476,10 +561,7 @@ export async function inspectJsonlArtifact(path: string): Promise<JsonlArtifactS
   let title: string | undefined
   let problem: string | undefined
   try {
-    const raw = createReadStream(path)
-    const stream = compressed ? raw.pipe(createZstdDecompress()) : raw
-    const lines = createInterface({ input: stream as Readable, crlfDelay: Number.POSITIVE_INFINITY })
-    for await (const line of lines) {
+    for await (const line of artifactLines(path)) {
       if (line === '') continue
       let parsed: unknown
       try {
@@ -528,7 +610,6 @@ export async function inspectJsonlArtifact(path: string): Promise<JsonlArtifactS
  * nothing to salvage, so `undefined` is returned instead of a guessed header.
  */
 export async function salvageJsonlArtifact(path: string): Promise<LogCopy | undefined> {
-  const compressed = path.endsWith('.zstd')
   if (!existsSync(path)) return undefined
   const events: SessionEvent[] = []
   let header: SessionHeader | undefined
@@ -538,10 +619,7 @@ export async function salvageJsonlArtifact(path: string): Promise<LogCopy | unde
   // reached, so the first event fixes the base every later seq is measured from.
   let base: number | undefined
   try {
-    const raw = createReadStream(path)
-    const stream = compressed ? raw.pipe(createZstdDecompress()) : raw
-    const lines = createInterface({ input: stream as Readable, crlfDelay: Number.POSITIVE_INFINITY })
-    for await (const line of lines) {
+    for await (const line of artifactLines(path)) {
       if (line === '') continue
       if (broken) break
       let parsed: unknown
@@ -581,7 +659,7 @@ export async function salvageJsonlArtifact(path: string): Promise<LogCopy | unde
   const problem = broken
     ? `the log breaks after ${events.length} events; copied that prefix`
     : undefined
-  return { header, inheritedEventCount: inheritedCountOf(events), events, problem }
+  return { header, inheritedEventCount: inheritedCountOf(events), events, problem, ...(broken ? { incomplete: true } : {}) }
 }
 
 /**
@@ -633,6 +711,8 @@ export interface LogCopy {
   readonly header: SessionHeader
   readonly inheritedEventCount: number
   readonly events: readonly SessionEvent[]
+  /** Set only when streaming salvage stopped before the physical log ended. */
+  readonly incomplete?: boolean | undefined
   /** Set when the copy was not taken through the provider verbatim. */
   readonly problem?: string | undefined
 }
@@ -1033,6 +1113,23 @@ async function checkpointDatabase(path: string): Promise<void> {
  * Publish a staged store over the target, refusing while DSH writes it.
  */
 export async function publishDatabase(staged: string, target: string): Promise<void> {
+  await publishDatabaseWithPolicy(staged, target)
+}
+
+/** Publish a clone without ever replacing an existing store. */
+export async function publishNewDatabase(
+  staged: string,
+  target: string,
+  assertAbsent: () => Promise<void>,
+): Promise<void> {
+  await publishDatabaseWithPolicy(staged, target, assertAbsent)
+}
+
+async function publishDatabaseWithPolicy(
+  staged: string,
+  target: string,
+  assertAbsent?: () => Promise<void>,
+): Promise<void> {
   // Take the lease first: renaming under a live writer loses its later appends
   // to an unlinked inode without any error.
   // The lease id is the caller's business, not the session's: publish holds it
@@ -1040,6 +1137,17 @@ export async function publishDatabase(staged: string, target: string): Promise<v
   // cannot interleave with it.
   const lease = await SessionWriteLease.acquire(dirname(target), basename(dirname(target)) as SessionId)
   try {
+    if (assertAbsent !== undefined) {
+      await checkpointDatabase(staged)
+      await assertAbsent()
+      if (DATABASE_SUFFIXES.some((suffix) => existsSync(`${target}${suffix}`)
+        || existsSync(`${target}.replaced${suffix}`))) {
+        throw new Error(`clone target "${target}" already exists`)
+      }
+      await link(staged, target)
+      await unlink(staged)
+      return
+    }
     // A publish that died between moving the old store aside and renaming the
     // new one leaves the old store under `<target>.replaced` and nothing under
     // the target name: invisible to listing, and one `removeDatabase` away from
@@ -1095,14 +1203,30 @@ export async function publishDatabase(staged: string, target: string): Promise<v
  * new main file next to an old write-ahead log.
  */
 async function moveDatabase(from: string, to: string): Promise<void> {
-  for (const suffix of ['-wal', '-shm', '-journal']) {
-    try {
-      await rename(`${from}${suffix}`, `${to}${suffix}`)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  const moved: string[] = []
+  try {
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+      try {
+        await rename(`${from}${suffix}`, `${to}${suffix}`)
+        moved.push(suffix)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+      }
     }
+    await rename(from, to)
+  } catch (error) {
+    // A later sharing/IO failure must not detach a committed WAL from its old
+    // main file. Restore only files moved by this call, in reverse order.
+    const errors: unknown[] = [error]
+    for (const suffix of moved.reverse()) {
+      try { await rename(`${to}${suffix}`, `${from}${suffix}`) }
+      catch (restoreError) { errors.push(restoreError) }
+    }
+    if (errors.length > 1) {
+      throw new AggregateError(errors, `database move from ${from} to ${to} failed and sidecar restoration was incomplete; preserve both paths for recovery`)
+    }
+    throw error
   }
-  await rename(from, to)
 }
 
 /** Canonical JSON: sorted keys, so two encoders of the same value compare equal. */

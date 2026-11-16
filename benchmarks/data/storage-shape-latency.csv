@@ -1,0 +1,16 @@
+backend,operation,ms
+jsonl_zstd,read_first_100,0.369
+jsonl_zstd,read_mid_100,11.116
+jsonl_zstd,read_tail_100,21.695
+jsonl_zstd,full_scan,81.305
+jsonl_zstd,append_one,0.079
+sqlite_plain,read_first_100,0.914
+sqlite_plain,read_mid_100,0.861
+sqlite_plain,read_tail_100,0.777
+sqlite_plain,full_scan,78.659
+sqlite_plain,append_one,11.002
+sqlite_chunked,read_first_100,1.549
+sqlite_chunked,read_mid_100,1.411
+sqlite_chunked,read_tail_100,1.262
+sqlite_chunked,full_scan,76.790
+sqlite_chunked,append_one,10.978

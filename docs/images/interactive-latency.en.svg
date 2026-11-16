@@ -1,0 +1,483 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="715.787822pt" height="373.704328pt" viewBox="0 0 715.787822 373.704328" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-11-16T16:15:55.897207</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.10.9, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 373.704328 
+L 715.787822 373.704328 
+L 715.787822 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 138.463125 315.247875 
+L 662.983125 315.247875 
+L 662.983125 43.591875 
+L 138.463125 43.591875 
+z
+" style="fill: #ffffff"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <path d="M 208.708663 315.247875 
+L 208.708663 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_2">
+      <defs>
+       <path id="md3118275db" d="M 0 0 
+L 0 3.5 
+" style="stroke: #64748b; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#md3118275db" x="208.708663" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="208.708663" y="330.241625" transform="rotate(-0 208.708663 330.241625)">1</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_3">
+      <path d="M 254.292077 315.247875 
+L 254.292077 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#md3118275db" x="254.292077" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="254.292077" y="330.241625" transform="rotate(-0 254.292077 330.241625)">2</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_5">
+      <path d="M 314.550071 315.247875 
+L 314.550071 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#md3118275db" x="314.550071" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="314.550071" y="330.241625" transform="rotate(-0 314.550071 330.241625)">5</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_7">
+      <path d="M 360.133484 315.247875 
+L 360.133484 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#md3118275db" x="360.133484" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="360.133484" y="330.241625" transform="rotate(-0 360.133484 330.241625)">10</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_9">
+      <path d="M 405.716897 315.247875 
+L 405.716897 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#md3118275db" x="405.716897" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="405.716897" y="330.241625" transform="rotate(-0 405.716897 330.241625)">20</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_11">
+      <path d="M 465.974891 315.247875 
+L 465.974891 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#md3118275db" x="465.974891" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="465.974891" y="330.241625" transform="rotate(-0 465.974891 330.241625)">50</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_13">
+      <path d="M 511.558304 315.247875 
+L 511.558304 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#md3118275db" x="511.558304" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="511.558304" y="330.241625" transform="rotate(-0 511.558304 330.241625)">100</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_15">
+      <path d="M 557.141718 315.247875 
+L 557.141718 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#md3118275db" x="557.141718" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="557.141718" y="330.241625" transform="rotate(-0 557.141718 330.241625)">200</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_17">
+      <path d="M 617.399712 315.247875 
+L 617.399712 43.591875 
+" clip-path="url(#p55c86f8f90)" style="fill: none; stroke: #e2e8f0; stroke-width: 0.9; stroke-linecap: square"/>
+     </g>
+     <g id="line2d_18">
+      <g>
+       <use xlink:href="#md3118275db" x="617.399712" y="315.247875" style="fill: #64748b; stroke: #64748b; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <text style="font-size: 10px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="617.399712" y="330.241625" transform="rotate(-0 617.399712 330.241625)">500</text>
+     </g>
+    </g>
+    <g id="text_10">
+     <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #64748b" x="400.723125" y="344.321625" transform="rotate(-0 400.723125 344.321625)">time (ms, log scale)</text>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_19"/>
+     <g id="text_11">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="71.830308" transform="rotate(-0 134.963125 71.830308)">open session (header)</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_20"/>
+     <g id="text_12">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="103.710715" transform="rotate(-0 134.963125 103.710715)">first page of 100</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_21"/>
+     <g id="text_13">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="135.535457" transform="rotate(-0 134.963125 135.535457)">tail page of 100</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_22"/>
+     <g id="text_14">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="167.360199" transform="rotate(-0 134.963125 167.360199)">mid page of 100</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_23"/>
+     <g id="text_15">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="199.129277" transform="rotate(-0 134.963125 199.129277)">200 events at random offset</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_24"/>
+     <g id="text_16">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="230.95402" transform="rotate(-0 134.963125 230.95402)">stat (list metadata)</text>
+     </g>
+    </g>
+    <g id="ytick_7">
+     <g id="line2d_25"/>
+     <g id="text_17">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="262.778762" transform="rotate(-0 134.963125 262.778762)">append one event</text>
+     </g>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_26"/>
+     <g id="text_18">
+      <text style="font-size: 9.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #1e293b" x="134.963125" y="294.603504" transform="rotate(-0 134.963125 294.603504)">create session</text>
+     </g>
+    </g>
+   </g>
+   <g id="patch_3">
+    <path d="M 138.463125 315.247875 
+L 662.983125 315.247875 
+" style="fill: none; stroke: #e2e8f0; stroke-width: 0.8; stroke-linejoin: miter; stroke-linecap: square"/>
+   </g>
+   <g id="patch_4">
+    <path d="M -151216.111857 68.033277 
+L 455.44172 68.033277 
+L 455.44172 55.939875 
+L -151216.111857 55.939875 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_5">
+    <path d="M -151216.111857 80.126679 
+L 647.581143 80.126679 
+L 647.581143 68.033277 
+L -151216.111857 68.033277 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_19">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="462.89455" y="64.327396" transform="rotate(-0 462.89455 64.327396)">42.6 ms</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="655.033973" y="76.420798" transform="rotate(-0 655.033973 76.420798)">791.2 ms</text>
+   </g>
+   <g id="text_21">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="70.511793" transform="rotate(-0 673.473525 70.511793)">×18.6</text>
+   </g>
+   <g id="patch_6">
+    <path d="M -151216.111857 99.858019 
+L 363.96542 99.858019 
+L 363.96542 87.764617 
+L -151216.111857 87.764617 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_7">
+    <path d="M -151216.111857 111.951421 
+L 656.367758 111.951421 
+L 656.367758 99.858019 
+L -151216.111857 99.858019 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_22">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="371.41825" y="96.152139" transform="rotate(-0 371.41825 96.152139)">10.6 ms</text>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="663.820588" y="108.245541" transform="rotate(-0 663.820588 108.245541)">904.3 ms</text>
+   </g>
+   <g id="text_24">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="102.336535" transform="rotate(-0 673.473525 102.336535)">×85</text>
+   </g>
+   <g id="patch_8">
+    <path d="M -151216.111857 131.682762 
+L 333.796892 131.682762 
+L 333.796892 119.58936 
+L -151216.111857 119.58936 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_9">
+    <path d="M -151216.111857 143.776164 
+L 649.239052 143.776164 
+L 649.239052 131.682762 
+L -151216.111857 131.682762 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_25">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="341.249722" y="127.976881" transform="rotate(-0 341.249722 127.976881)">6.7 ms</text>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="656.691882" y="140.070283" transform="rotate(-0 656.691882 140.070283)">811.4 ms</text>
+   </g>
+   <g id="text_27">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="134.161277" transform="rotate(-0 673.473525 134.161277)">×121</text>
+   </g>
+   <g id="patch_10">
+    <path d="M -151216.111857 163.507504 
+L 318.382007 163.507504 
+L 318.382007 151.414102 
+L -151216.111857 151.414102 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_11">
+    <path d="M -151216.111857 175.600906 
+L 643.2171 175.600906 
+L 643.2171 163.507504 
+L -151216.111857 163.507504 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_28">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="325.834837" y="159.801623" transform="rotate(-0 325.834837 159.801623)">5.3 ms</text>
+   </g>
+   <g id="text_29">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="650.66993" y="171.895025" transform="rotate(-0 650.66993 171.895025)">740.4 ms</text>
+   </g>
+   <g id="text_30">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="165.986019" transform="rotate(-0 673.473525 165.986019)">×140</text>
+   </g>
+   <g id="patch_12">
+    <path d="M -151216.111857 195.332246 
+L 462.878008 195.332246 
+L 462.878008 183.238844 
+L -151216.111857 183.238844 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_13">
+    <path d="M -151216.111857 207.425648 
+L 651.860703 207.425648 
+L 651.860703 195.332246 
+L -151216.111857 195.332246 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_31">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="470.330838" y="191.626365" transform="rotate(-0 470.330838 191.626365)">47.7 ms</text>
+   </g>
+   <g id="text_32">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="659.313533" y="203.719767" transform="rotate(-0 659.313533 203.719767)">844.4 ms</text>
+   </g>
+   <g id="text_33">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="197.810762" transform="rotate(-0 673.473525 197.810762)">×17.7</text>
+   </g>
+   <g id="patch_14">
+    <path d="M -151216.111857 227.156988 
+L 185.252662 227.156988 
+L 185.252662 215.063586 
+L -151216.111857 215.063586 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_15">
+    <path d="M -151216.111857 239.25039 
+L 313.221481 239.25039 
+L 313.221481 227.156988 
+L -151216.111857 227.156988 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_34">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="192.705492" y="223.451108" transform="rotate(-0 192.705492 223.451108)">0.70 ms</text>
+   </g>
+   <g id="text_35">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="320.674311" y="235.54451" transform="rotate(-0 320.674311 235.54451)">4.9 ms</text>
+   </g>
+   <g id="text_36">
+    <text style="font-weight: 700; font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="229.635504" transform="rotate(-0 673.473525 229.635504)">×7</text>
+   </g>
+   <g id="patch_16">
+    <path d="M -151216.111857 258.981731 
+L 267.638068 258.981731 
+L 267.638068 246.888329 
+L -151216.111857 246.888329 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_17">
+    <path d="M -151216.111857 271.075133 
+L 274.270961 271.075133 
+L 274.270961 258.981731 
+L -151216.111857 258.981731 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_37">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="275.090898" y="255.27585" transform="rotate(-0 275.090898 255.27585)">2.5 ms</text>
+   </g>
+   <g id="text_38">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="281.723791" y="267.369252" transform="rotate(-0 281.723791 267.369252)">2.7 ms</text>
+   </g>
+   <g id="text_39">
+    <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #ea580c" x="673.473525" y="261.460246" transform="rotate(-0 673.473525 261.460246)">×1.1</text>
+   </g>
+   <g id="patch_18">
+    <path d="M -151216.111857 290.806473 
+L 433.898325 290.806473 
+L 433.898325 278.713071 
+L -151216.111857 278.713071 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #2563eb"/>
+   </g>
+   <g id="patch_19">
+    <path d="M -151216.111857 302.899875 
+L 163.12525 302.899875 
+L 163.12525 290.806473 
+L -151216.111857 290.806473 
+z
+" clip-path="url(#p55c86f8f90)" style="fill: #94a3b8"/>
+   </g>
+   <g id="text_40">
+    <text style="font-weight: 700; font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #2563eb" x="441.351155" y="287.100592" transform="rotate(-0 441.351155 287.100592)">30.7 ms</text>
+   </g>
+   <g id="text_41">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="170.578081" y="299.193994" transform="rotate(-0 170.578081 299.193994)">0.50 ms</text>
+   </g>
+   <g id="text_42">
+    <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="673.473525" y="293.284989" transform="rotate(-0 673.473525 293.284989)">×0.02</text>
+   </g>
+   <g id="text_43">
+    <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="138.463125" y="34.083915" transform="rotate(-0 138.463125 34.083915)">median, log scale; the mount is rebuilt on every round</text>
+   </g>
+   <g id="text_44">
+    <text style="font-size: 8.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="673.473525" y="37.591875" transform="rotate(-0 673.473525 37.591875)">speedup</text>
+   </g>
+   <g id="text_45">
+    <text style="font-weight: 700; font-size: 13px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="138.463125" y="17.591875" transform="rotate(-0 138.463125 17.591875)">Interactive latency, one 47,374-event session</text>
+   </g>
+   <g id="legend_1">
+    <g id="patch_20">
+     <path d="M 539.742188 290.978812 
+L 549.642188 290.978812 
+L 549.642188 284.678812 
+L 539.742188 284.678812 
+z
+" style="fill: #2563eb; stroke: #2563eb; stroke-linejoin: miter"/>
+    </g>
+    <g id="text_46">
+     <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="556.842188" y="290.978812" transform="rotate(-0 556.842188 290.978812)">SQLite backend</text>
+    </g>
+    <g id="patch_21">
+     <path d="M 539.742188 304.910531 
+L 549.642188 304.910531 
+L 549.642188 298.610531 
+L 539.742188 298.610531 
+z
+" style="fill: #94a3b8; stroke: #94a3b8; stroke-linejoin: miter"/>
+    </g>
+    <g id="text_47">
+     <text style="font-size: 9px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #1e293b" x="556.842188" y="304.910531" transform="rotate(-0 556.842188 304.910531)">official JSONL backend</text>
+    </g>
+   </g>
+  </g>
+  <g id="text_48">
+   <text style="font-size: 7.5px; font-family: 'Microsoft YaHei', 'SimHei', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #64748b" x="59.277525" y="364.639875" transform="rotate(-0 59.277525 364.639875)">Measured on Windows with Node 24 and DSH 0.2.2-rc.1; reproduction steps in docs/benchmarks.md</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p55c86f8f90">
+   <rect x="138.463125" y="43.591875" width="524.52" height="271.656"/>
+  </clipPath>
+ </defs>
+</svg>

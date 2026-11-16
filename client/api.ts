@@ -21,6 +21,8 @@ import type {
   UninstallReport,
 } from './types.ts'
 
+import { consoleFetch } from './host-fetch.ts'
+
 const ROUTE = 'api/session-optimizer'
 
 function endpoint(path: string, params?: Record<string, string | number | undefined>): string {
@@ -29,7 +31,7 @@ function endpoint(path: string, params?: Record<string, string | number | undefi
     if (value === undefined || value === '') continue
     url.searchParams.set(key, String(value))
   }
-  return url.href
+  return `${path}${url.search}`
 }
 
 /** One response body, or a thrown error carrying the route's message. */
@@ -38,7 +40,7 @@ async function read<T>(
   params?: Record<string, string | number | undefined>,
   signal?: AbortSignal,
 ): Promise<T> {
-  const response = await fetch(endpoint(path, params), {
+  const response = await consoleFetch(endpoint(path, params), {
     headers: { accept: 'application/json' },
     credentials: 'same-origin',
     ...(signal === undefined ? {} : { signal }),
@@ -56,8 +58,19 @@ async function read<T>(
   return (await response.json()) as T
 }
 
-export function fetchOverview(signal?: AbortSignal): Promise<Overview> {
-  return read<Overview>('overview', undefined, signal)
+export function fetchOverview(signal?: AbortSignal, page: { offset?: number; limit?: number; titles?: boolean; parent?: string; ids?: readonly string[] } = {}): Promise<Overview> {
+  return read<Overview>('overview', { offset: page.offset ?? 0, limit: page.limit ?? 50, titles: page.titles === true ? 1 : undefined, parent: page.parent, ids: page.ids === undefined ? undefined : JSON.stringify(page.ids) }, signal)
+}
+
+export interface SessionTitle { id: string; title?: string | undefined; problem?: string | undefined; removed?: boolean | undefined; titlePending?: boolean | undefined }
+export function fetchSessionTitles(ids: readonly string[], signal?: AbortSignal, root?: string): Promise<{ titles: SessionTitle[] }> {
+  return read('titles', { ids: JSON.stringify(ids), root }, signal)
+}
+
+export interface WorkspaceMembership { sessionId: string; workspaceId: string }
+export interface WorkspaceProjection { workspaceId: string; path: string; title: string; createdAt: string; updatedAt: string; sessionIds: readonly string[] }
+export function fetchWorkspaceMemberships(ids: readonly string[], signal?: AbortSignal): Promise<{ available: boolean; memberships: WorkspaceMembership[]; workspaces: WorkspaceProjection[]; dshVersion?: string }> {
+  return read('workspace-memberships', { ids: JSON.stringify(ids) }, signal)
 }
 
 /** Real latency series, or an explicit "nothing sampled yet". */
@@ -66,6 +79,10 @@ export function fetchMetrics(signal?: AbortSignal): Promise<MetricsAnswer> {
 }
 
 /** Every migration this Host process has run, newest last. */
+export async function clearMigrations(): Promise<{ cleared: number; retainedRunning: number }> {
+  return await post('migrations/clear', {})
+}
+
 export async function fetchMigrations(signal?: AbortSignal): Promise<MigrationsAnswer> {
   const body = await read<MigrationsAnswer>('migrations', undefined, signal)
   return { ...body, jobs: body.jobs ?? [], available: body.available === true }
@@ -89,6 +106,7 @@ export async function fetchSource(
     offset?: number
     limit?: number
     query?: string
+    parent?: string
     refresh?: boolean
   },
   signal?: AbortSignal,
@@ -102,6 +120,9 @@ export async function fetchSource(
       limit: options.limit,
       q: options.query,
       refresh: options.refresh === true ? 1 : undefined,
+      summary: 1,
+      grouped: 1,
+      parent: options.parent,
     },
     signal,
   )
@@ -161,7 +182,7 @@ export async function fetchUninstallCheck(signal?: AbortSignal): Promise<Uninsta
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(endpoint(path), {
+  const response = await consoleFetch(endpoint(path), {
     method: 'POST',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     credentials: 'same-origin',

@@ -23,6 +23,7 @@ import { join, dirname } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_PREFERENCES,
+  DEFAULT_PERFORMANCE_PREFERENCES,
   PREFERENCES_FILENAME,
   PreferencesUsageError,
   createPreferencesHost,
@@ -63,11 +64,12 @@ describe('reading the preferences file', () => {
   it('falls back field by field, not wholesale', async () => {
     const path = await nestedPath()
     mkdirSync(join(path, '..'), { recursive: true })
-    writeFileSync(path, JSON.stringify({ format: 'jsonl', stabilityFixes: 'yes', language: 'klingon' }))
+    writeFileSync(path, JSON.stringify({ format: 'jsonl', stabilityFixes: 'yes', language: 'klingon', performance: DEFAULT_PERFORMANCE_PREFERENCES }))
     expect(readPreferences(path)).toStrictEqual({
       format: 'jsonl',
       stabilityFixes: DEFAULT_PREFERENCES.stabilityFixes,
       language: DEFAULT_PREFERENCES.language,
+      performance: DEFAULT_PERFORMANCE_PREFERENCES,
     })
   })
 
@@ -89,7 +91,7 @@ describe('reading the preferences file', () => {
 describe('writing the preferences file', () => {
   it('creates the directory 0700 and the file 0600, with no temp file left behind', async () => {
     const path = await nestedPath()
-    const preferences: Preferences = { format: 'jsonl', stabilityFixes: false, language: 'en' }
+    const preferences: Preferences = { format: 'jsonl', stabilityFixes: false, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES }
     writePreferences(path, preferences)
 
     const directoryMode = statSync(join(path, '..')).mode & 0o777
@@ -109,8 +111,8 @@ describe('writing the preferences file', () => {
 
   it('replaces the previous content instead of appending to it', async () => {
     const path = await nestedPath()
-    writePreferences(path, { format: 'jsonl', stabilityFixes: false, language: 'en' })
-    writePreferences(path, { format: 'sqlite', stabilityFixes: true, language: 'zh' })
+    writePreferences(path, { format: 'jsonl', stabilityFixes: false, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
+    writePreferences(path, { format: 'sqlite', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES })
     expect(readPreferences(path)).toStrictEqual(DEFAULT_PREFERENCES)
   })
 })
@@ -160,24 +162,24 @@ function applied(spy: Preferences[]): (preferences: Preferences) => void {
 describe('the preference store', () => {
   it('applies what it read before the first request', async () => {
     const path = await nestedPath()
-    writePreferences(path, { format: 'jsonl', stabilityFixes: false, language: 'en' })
+    writePreferences(path, { format: 'jsonl', stabilityFixes: false, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
     const seen: Preferences[] = []
     const host = createPreferencesHost(path, ['sqlite', 'jsonl'], applied(seen))
     // The running backend is already on the saved switches, not the defaults.
-    expect(seen).toStrictEqual([{ format: 'jsonl', stabilityFixes: false, language: 'en' }])
-    expect(host.read()).toStrictEqual({ format: 'jsonl', stabilityFixes: false, language: 'en' })
+    expect(seen).toStrictEqual([{ format: 'jsonl', stabilityFixes: false, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES }])
+    expect(host.read()).toStrictEqual({ format: 'jsonl', stabilityFixes: false, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
   })
 
   it('reads a format this build cannot serve as one it can, without rewriting the file', async () => {
     const path = await nestedPath()
-    writePreferences(path, { format: 'jsonl', stabilityFixes: true, language: 'zh' })
+    writePreferences(path, { format: 'jsonl', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES })
     const seen: Preferences[] = []
     const host = createPreferencesHost(path, ['sqlite'], applied(seen))
     // The install lost a backend but keeps working; the file still says jsonl so
     // re-adding the backend restores the operator's choice.
     expect(host.read().format).toBe('sqlite')
     expect(readPreferences(path).format).toBe('jsonl')
-    expect(seen).toStrictEqual([{ format: 'sqlite', stabilityFixes: true, language: 'zh' }])
+    expect(seen).toStrictEqual([{ format: 'sqlite', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES }])
   })
 
   it('persists, applies and answers one patch', async () => {
@@ -185,7 +187,7 @@ describe('the preference store', () => {
     const seen: Preferences[] = []
     const host = createPreferencesHost(path, ['sqlite', 'jsonl'], applied(seen))
     const next = host.update({ format: 'jsonl' })
-    expect(next).toStrictEqual({ format: 'jsonl', stabilityFixes: true, language: 'zh' })
+    expect(next).toStrictEqual({ format: 'jsonl', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES })
     expect(seen.at(-1)).toStrictEqual(next)
     expect(readPreferences(path)).toStrictEqual(next)
     expect(host.read()).toStrictEqual(next)
@@ -205,7 +207,7 @@ describe('the preference store', () => {
     const host = createPreferencesHost(path, ['sqlite', 'jsonl'], applied([]))
     host.update({ stabilityFixes: false })
     const after = host.update({ language: 'en' })
-    expect(after).toStrictEqual({ format: 'sqlite', stabilityFixes: false, language: 'en' })
+    expect(after).toStrictEqual({ format: 'sqlite', stabilityFixes: false, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
   })
 
   it('rewrites a file an operator made read-only and says nothing about it', async () => {
@@ -229,7 +231,7 @@ describe('the preference store', () => {
     const seen: Preferences[] = []
     const host = createPreferencesHost(path, ['sqlite', 'jsonl'], applied(seen), { format: 'jsonl' })
     expect(host.read().format).toBe('jsonl')
-    expect(seen).toStrictEqual([{ format: 'jsonl', stabilityFixes: true, language: 'zh' }])
+    expect(seen).toStrictEqual([{ format: 'jsonl', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES }])
     // A seed is a starting value, not a decision: nothing is written until the
     // operator changes something.
     expect(existsSync(path)).toBe(false)
@@ -237,7 +239,7 @@ describe('the preference store', () => {
 
   it('lets a saved file win over the seed', async () => {
     const path = await nestedPath()
-    writePreferences(path, { format: 'sqlite', stabilityFixes: true, language: 'zh' })
+    writePreferences(path, { format: 'sqlite', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES })
     const host = createPreferencesHost(path, ['sqlite', 'jsonl'], applied([]), { format: 'jsonl' })
     expect(host.read().format).toBe('sqlite')
   })
@@ -250,7 +252,7 @@ describe('the preference store', () => {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     writeFileSync(path, '{"language":"en"}', { mode: 0o600 })
     const host = createPreferencesHost(path, ['sqlite', 'jsonl'], applied([]), { format: 'jsonl' })
-    expect(host.read()).toStrictEqual({ format: 'jsonl', stabilityFixes: true, language: 'en' })
+    expect(host.read()).toStrictEqual({ format: 'jsonl', stabilityFixes: true, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
   })
 
   it.each([
@@ -289,10 +291,10 @@ describe('the preference store', () => {
     // keep the operator's choice, so a language change cannot overwrite it with
     // the coerced value and destroy the routing decision.
     const path = await nestedPath()
-    writePreferences(path, { format: 'jsonl', stabilityFixes: true, language: 'zh' })
+    writePreferences(path, { format: 'jsonl', stabilityFixes: true, language: 'zh', performance: DEFAULT_PERFORMANCE_PREFERENCES })
     const host = createPreferencesHost(path, ['sqlite'], applied([]))
     const next = host.update({ language: 'en' })
-    expect(next).toStrictEqual({ format: 'sqlite', stabilityFixes: true, language: 'en' })
-    expect(readPreferences(path)).toStrictEqual({ format: 'jsonl', stabilityFixes: true, language: 'en' })
+    expect(next).toStrictEqual({ format: 'sqlite', stabilityFixes: true, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
+    expect(readPreferences(path)).toStrictEqual({ format: 'jsonl', stabilityFixes: true, language: 'en', performance: DEFAULT_PERFORMANCE_PREFERENCES })
   })
 })

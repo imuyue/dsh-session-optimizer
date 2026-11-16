@@ -33,7 +33,6 @@ export interface Text {
     readonly overview: string
     readonly transfer: string
     readonly metrics: string
-    readonly diagnostics: string
     readonly settings: string
   }
   readonly footer: {
@@ -56,10 +55,14 @@ export interface Text {
     readonly acrossSessions: (count: string) => string
     readonly databaseNote: (size: string, wal: string) => string
     readonly nothingDamaged: string
+    readonly metadataOnly: string
+    readonly checkPending: string
     readonly seeTable: string
     readonly usageTitle: string
     readonly noSessions: string
     readonly untitled: string
+    readonly readingTitle: string
+    readonly childConversations: (value: string) => string
     readonly configTitle: string
     readonly format: string
     readonly layoutVersion: (version: number) => string
@@ -89,12 +92,17 @@ export interface Text {
     readonly scanningList: string
     readonly conversations: (count: string) => string
     readonly showMore: string
+    readonly previousPage: string
+    readonly nextPage: string
+    readonly pageOf: (page: number, total: number) => string
     readonly emptyNoRoot: string
     readonly emptyScanning: string
     readonly emptyNone: string
     readonly selectAll: string
     readonly selectOne: (id: string) => string
+    readonly currentFormat: (backend: string) => string
     readonly alreadyIn: (backend: string) => string
+    readonly linkedChildren: string
     readonly modeOverwrite: string
     readonly modeClone: string
     readonly verify: string
@@ -106,6 +114,7 @@ export interface Text {
     readonly singleBackend: string
     readonly noRun: string
     readonly recent: string
+    readonly clearHistory: string
     readonly statusDone: string
     readonly statusRunning: string
     readonly statusFailed: string
@@ -125,6 +134,7 @@ export interface Text {
     readonly reading: string
     readonly noSamples: string
     readonly window: (minutes: number) => string
+    readonly retention: (count: number) => string
     readonly samples: string
     readonly failures: string
     readonly bucket: (seconds: number) => string
@@ -163,6 +173,15 @@ export interface Text {
     readonly on: string
     readonly off: string
     readonly language: string
+    readonly performance: {
+      readonly title: string
+      readonly enabled: string
+      readonly historyWindow: string
+      readonly virtualChat: string
+      readonly restore: string
+      readonly saving: string
+      readonly syncing: string
+    }
     readonly version: string
     readonly checkUpdate: string
     readonly checking: string
@@ -201,11 +220,11 @@ export interface Text {
 }
 
 const ZH: Text = {
-  title: '会话存储',
+  title: '会话优化',
   refresh: '刷新',
   refreshing: '读取中…',
-  navLabel: '会话存储视图',
-  nav: { overview: '总览', transfer: '对话转换', metrics: '延迟', diagnostics: '诊断', settings: '设置' },
+  navLabel: '会话优化视图',
+  nav: { overview: '总览', transfer: '对话转换', metrics: '延迟', settings: '设置' },
   footer: { sessions: (count) => `${count} 个会话`, storage: 'SQLite 存储' },
   overview: {
     reading: '正在读取根目录…',
@@ -222,10 +241,14 @@ const ZH: Text = {
     acrossSessions: (count) => `${count} 个会话合计`,
     databaseNote: (size, wal) => `数据库 ${size} · WAL ${wal}`,
     nothingDamaged: '无损坏或待恢复会话',
+    metadataOnly: '已读取会话文件清单',
+    checkPending: '未执行全量校验',
     seeTable: '见下表标记的会话',
     usageTitle: '空间占用',
     noSessions: '这个目录里还没有会话。',
     untitled: '未命名',
+    readingTitle: '读取标题中…',
+    childConversations: value => `子对话（${value}）`,
     configTitle: '存储配置',
     format: '存储格式',
     layoutVersion: (version) => `SQLite · 布局版本 ${String(version)}`,
@@ -250,14 +273,19 @@ const ZH: Text = {
     scanningList: '正在扫描…',
     conversations: (count) => `${count} 个对话`,
     showMore: '显示更多',
+    previousPage: '上一页',
+    nextPage: '下一页',
+    pageOf: (page, total) => `第 ${page} / ${total} 页`,
     emptyNoRoot: '还没有识别到可转换的对话。',
     emptyScanning: '正在扫描目录…',
     emptyNone: '这个目录里没有对话。',
     selectAll: '选择全部对话',
     selectOne: (id) => `选择对话 ${id}`,
-    alreadyIn: (backend) => `已在 ${backend}`,
-    modeOverwrite: '转换并切换存储',
-    modeClone: '创建副本',
+    currentFormat: (backend) => `当前格式：${backend}`,
+    alreadyIn: (backend) => `${backend} 库已有对应对话或副本`,
+    linkedChildren: '会同时转换关联子对话；创建副本时会复制独立的子对话。',
+    modeOverwrite: '转换后覆盖原对话',
+    modeClone: '转换后创建新对话',
     verify: '完成后校验',
     hintNone: '未选择对话',
     hintSome: (count) => `已选择 ${String(count)} 个对话`,
@@ -267,6 +295,7 @@ const ZH: Text = {
     singleBackend: '当前 profile 只挂了一个后端，没有可转换的目标。启用 hybrid 模式后这里才能提交。',
     noRun: '本进程还没有运行过转换。',
     recent: '最近转换',
+    clearHistory: '清空记录',
     statusDone: '已完成',
     statusRunning: '进行中',
     statusFailed: '有失败',
@@ -280,12 +309,13 @@ const ZH: Text = {
   metrics: {
     reading: '正在读取采样…',
     noSamples: '本次运行还没有计时样本。用一次对话，再回到这里。',
-    window: (minutes) => `最近 ${String(minutes)} 分钟`,
+    window: (minutes) => `记录范围：最近 ${String(minutes)} 分钟`,
+    retention: (count) => `每类保留最近 ${String(count)} 条`,
     samples: '个样本',
     failures: '次失败',
     bucket: (seconds) => `每 ${String(seconds)} 秒聚合一次`,
     updatedAt: (when) => `更新于 ${when}`,
-    subtitle: '窗口内每次操作的耗时',
+    subtitle: '已保留的真实操作耗时',
     nothingTimed: '还没有任何操作被计时。',
     max: '最大值',
     calls: '调用次数',
@@ -325,6 +355,15 @@ const ZH: Text = {
     on: '开启',
     off: '关闭',
     language: '语言 / Language',
+    performance: {
+      title: '可选性能优化',
+      enabled: '启用可选性能优化',
+      historyWindow: '加快历史加载',
+      virtualChat: '轻量正文首屏',
+      restore: '关闭全部优化并恢复官方',
+      saving: '正在保存…',
+      syncing: '正在同步…',
+    },
     version: '当前插件版本',
     checkUpdate: '检查更新',
     checking: '检查中…',
@@ -358,15 +397,14 @@ const ZH: Text = {
 }
 
 const EN: Text = {
-  title: 'Session Storage',
+  title: 'Session Optimization',
   refresh: 'Refresh',
   refreshing: 'Loading…',
-  navLabel: 'Session storage views',
+  navLabel: 'Session optimization views',
   nav: {
     overview: 'Overview',
     transfer: 'Conversation transfer',
     metrics: 'Latency',
-    diagnostics: 'Diagnostics',
     settings: 'Settings',
   },
   footer: { sessions: (count) => `${count} conversations`, storage: 'SQLite storage' },
@@ -385,10 +423,14 @@ const EN: Text = {
     acrossSessions: (count) => `Across ${count} conversations`,
     databaseNote: (size, wal) => `Database ${size} · WAL ${wal}`,
     nothingDamaged: 'Nothing damaged or awaiting repair',
+    metadataOnly: 'Session file inventory loaded',
+    checkPending: 'Full validation not run',
     seeTable: 'See the marked rows below',
     usageTitle: 'Space used',
     noSessions: 'This root has no conversations yet.',
     untitled: 'Untitled',
+    readingTitle: 'Reading title…',
+    childConversations: value => `Sub-conversations (${value})`,
     configTitle: 'Storage settings',
     format: 'Storage format',
     layoutVersion: (version) => `SQLite · layout version ${String(version)}`,
@@ -413,14 +455,19 @@ const EN: Text = {
     scanningList: 'Scanning…',
     conversations: (count) => `${count} conversations`,
     showMore: 'Show more',
+    previousPage: 'Previous',
+    nextPage: 'Next',
+    pageOf: (page, total) => `Page ${page} / ${total}`,
     emptyNoRoot: 'No convertible conversations found yet.',
     emptyScanning: 'Scanning the directory…',
     emptyNone: 'This directory has no conversations.',
     selectAll: 'Select every conversation',
     selectOne: (id) => `Select conversation ${id}`,
-    alreadyIn: (backend) => `Already in ${backend}`,
-    modeOverwrite: 'Switch storage in place',
-    modeClone: 'Create a copy',
+    currentFormat: (backend) => `Current format: ${backend}`,
+    alreadyIn: (backend) => `Matching conversation or copy in ${backend}`,
+    linkedChildren: 'Includes linked sub-conversations. New copies receive independent sub-conversations.',
+    modeOverwrite: 'Convert and replace the original',
+    modeClone: 'Convert into a new conversation',
     verify: 'Verify when done',
     hintNone: 'No conversation selected',
     hintSome: (count) => `${String(count)} conversations selected`,
@@ -430,6 +477,7 @@ const EN: Text = {
     singleBackend: 'This profile mounts a single backend, so there is nowhere to convert to. Enable hybrid mode to submit from here.',
     noRun: 'No conversion has run in this process.',
     recent: 'Latest conversion',
+    clearHistory: 'Clear history',
     statusDone: 'Completed',
     statusRunning: 'Running',
     statusFailed: 'Failed',
@@ -443,12 +491,13 @@ const EN: Text = {
   metrics: {
     reading: 'Reading samples…',
     noSamples: 'Nothing has been timed in this run. Use a conversation, then come back here.',
-    window: (minutes) => `Last ${String(minutes)} minutes`,
+    window: (minutes) => `Recorded range: last ${String(minutes)} minutes`,
+    retention: (count) => `Latest ${String(count)} calls per operation`,
     samples: 'samples',
     failures: 'failures',
     bucket: (seconds) => `Aggregated every ${String(seconds)}s`,
     updatedAt: (when) => `Updated ${when}`,
-    subtitle: 'Time per operation inside the window',
+    subtitle: 'Retained real operation durations',
     nothingTimed: 'No operation has been timed yet.',
     max: 'Max',
     calls: 'Calls',
@@ -488,6 +537,15 @@ const EN: Text = {
     on: 'On',
     off: 'Off',
     language: '语言 / Language',
+    performance: {
+      title: 'Optional performance optimizations',
+      enabled: 'Enable optional performance optimizations',
+      historyWindow: 'Faster history loading',
+      virtualChat: 'Lightweight chat first page',
+      restore: 'Disable all optimizations and restore official behavior',
+      saving: 'Saving…',
+      syncing: 'Syncing…',
+    },
     version: 'Plugin version',
     checkUpdate: 'Check for updates',
     checking: 'Checking…',

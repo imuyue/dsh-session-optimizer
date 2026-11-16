@@ -1,0 +1,8 @@
+implementation,ms,note
+jsonl,808,median of 743-905 cold mount
+sqlite_no_seal,743,row-by-row column comparison
+sqlite_seal,669,trusted seal fast path
+sqlite_chunked_probe,490,chunk decompress 283 + parse 287
+sqlite_chunked_e2e,727,end-to-end with object construction
+jsonl_zstd_only,653,decompress to 47375 lines without parse
+jsonl_parse_only,368,JSON.parse of those lines without SQLite

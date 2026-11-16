@@ -284,15 +284,15 @@ describe('console routes', () => {
     // The session list and the event reader are gone; their routes went with
     // them, so an unread endpoint cannot rot here.
     expect([...routes.keys()].sort()).toEqual(
-      [OVERVIEW, METRICS, SEARCH, MIGRATIONS, MIGRATE, ROOTS, SOURCE, SETTINGS_ROUTE, DIAGNOSTICS, DIAGNOSTICS_CLEAR, UNINSTALL_CHECK].sort(),
+      [OVERVIEW, METRICS, SEARCH, MIGRATIONS, '/api/session-optimizer/migrations/clear', MIGRATE, ROOTS, SOURCE, SETTINGS_ROUTE, DIAGNOSTICS, DIAGNOSTICS_CLEAR, UNINSTALL_CHECK, '/api/session-optimizer/performance', '/api/session-optimizer/performance/client-report', '/api/session-optimizer/performance/disable', '/api/session-optimizer/history-preview'].sort(),
     )
     for (const [path, route] of routes) {
       expect(route.requestBody).toBe('buffered')
       // `/settings` is the one path that both reads and writes; the other writes
       // are the migration start and clearing the diagnostic ring.
-      const expected = path === MIGRATE || path === DIAGNOSTICS_CLEAR
+      const expected = path === '/api/session-optimizer/migrations/clear' || path === MIGRATE || path === DIAGNOSTICS_CLEAR || path.endsWith('/performance/disable') || path.endsWith('/performance/client-report')
         ? ['POST']
-        : path === SETTINGS_ROUTE ? ['GET', 'POST'] : ['GET']
+        : path === SETTINGS_ROUTE || path.endsWith('/performance') ? ['GET', 'POST'] : ['GET']
       expect(route.methods).toEqual(expected)
     }
   })
@@ -466,7 +466,7 @@ describe('the settings route', () => {
     expect(answer.status).toBe(200)
     expect(answer.body.available).toBe(true)
     expect(answer.body.formats).toEqual(['sqlite', 'jsonl'])
-    expect(answer.body.preferences).toEqual({ format: 'sqlite', stabilityFixes: true, language: 'zh' })
+    expect(answer.body.preferences).toEqual({ format: 'sqlite', stabilityFixes: true, language: 'zh', performance: { enabled: false, historyWindow: false, virtualChat: false } })
     // The store applies what it read before the first request, so the running
     // backend is already on the saved switches rather than the compiled defaults.
     expect(store.applied).toHaveLength(1)
@@ -484,7 +484,7 @@ describe('the settings route', () => {
 
     const written = await post(routes, SETTINGS_ROUTE, { format: 'jsonl' })
     expect(written.status).toBe(200)
-    expect(written.body).toEqual({ format: 'jsonl', stabilityFixes: true, language: 'zh' })
+    expect(written.body).toEqual({ format: 'jsonl', stabilityFixes: true, language: 'zh', performance: { enabled: false, historyWindow: false, virtualChat: false } })
     // Persisted, not just held: a restart reads the same file.
     expect(readPreferences(preferencesPath(store.directory)).format).toBe('jsonl')
     // And applied: the last call the backend saw carries the new format.
@@ -492,7 +492,7 @@ describe('the settings route', () => {
     expect(store.applied.at(-1)?.stabilityFixes).toBe(true)
 
     const second = await post(routes, SETTINGS_ROUTE, { stabilityFixes: false })
-    expect(second.body).toEqual({ format: 'jsonl', stabilityFixes: false, language: 'zh' })
+    expect(second.body).toEqual({ format: 'jsonl', stabilityFixes: false, language: 'zh', performance: { enabled: false, historyWindow: false, virtualChat: false } })
   })
 
   it('refuses a value it cannot honour and leaves the file untouched', async () => {
@@ -548,7 +548,7 @@ describe('the settings route', () => {
     // disk) is a server fault: a 400 would send the operator hunting for a typo
     // in a body that was perfectly valid.
     const broken: PreferencesHost = {
-      read: () => ({ format: 'sqlite', stabilityFixes: true, language: 'zh' }),
+      read: () => ({ format: 'sqlite', stabilityFixes: true, language: 'zh', performance: { enabled: false, historyWindow: false, virtualChat: false } }),
       update: () => {
         throw new Error('ENOSPC: no space left on device')
       },
@@ -601,6 +601,7 @@ describe('the settings route', () => {
       format: 'sqlite',
       stabilityFixes: true,
       language: 'zh',
+      performance: { enabled: false, historyWindow: false, virtualChat: false },
     })
   })
 

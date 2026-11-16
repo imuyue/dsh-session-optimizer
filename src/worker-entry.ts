@@ -14,6 +14,7 @@ import { ensureSessionDirectory } from './database.ts'
 import { InlineExecutor } from './executor.ts'
 import { toWireError, type WireRequest, type WireResponse } from './rpc.ts'
 import type { SqliteSettings } from './database.ts'
+import type { PageTransferFormat } from './page-transfer.ts'
 import { findDatabasePath } from './storage.ts'
 
 interface WorkerInit {
@@ -76,8 +77,8 @@ const handlers: Record<string, Handler> = {
    */
   pagedHeader: (path: string, settings: SqliteSettings) =>
     Promise.resolve(executor.pagedHeader(path, settings)),
-  readPage: (path: string, settings: SqliteSettings, from: number, to: number) =>
-    Promise.resolve(executor.readPage(path, settings, from, to)),
+  readPage: (path: string, settings: SqliteSettings, from: number, to: number, format: PageTransferFormat = 'bytes') =>
+    Promise.resolve(executor.readPage(path, settings, from, to, format)),
   close: () => executor.close(),
 }
 

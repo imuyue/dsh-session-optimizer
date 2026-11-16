@@ -127,7 +127,7 @@ async function reclaimStaleMarker(path: string, id: SessionId): Promise<boolean>
     const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
     if (typeof parsed === 'object' && parsed !== null) {
       const pid = (parsed as { pid?: unknown }).pid
-      if (typeof pid === 'number') ownerPid = pid
+      if (typeof pid === 'number' && Number.isSafeInteger(pid) && pid > 0 && pid <= 0x7fffffff) ownerPid = pid
     }
   } catch {
     throw new SessionAlreadyOwnedError(id)
@@ -138,7 +138,9 @@ async function reclaimStaleMarker(path: string, id: SessionId): Promise<boolean>
   // platform turns another process's start time into a checkable identity
   // (`startedAt` is recorded for forensics only), and the conservative answer
   // costs an operator one `dsq` call, while the other answer costs appends.
-  if (ownerPid !== process.pid && isProcessAlive(ownerPid)) {
+  // The current PID may own a lease through another tracker or migration path.
+  // Process identity is not permission to reclaim a still-live writer's marker.
+  if (isProcessAlive(ownerPid)) {
     throw new SessionAlreadyOwnedError(id)
   }
   const reclaim = `${path}.${process.pid}.${Date.now().toString(36)}.reclaim`

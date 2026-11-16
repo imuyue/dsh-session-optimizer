@@ -34,13 +34,14 @@ export interface SlotsService {
 /**
  * The `sessions` service, as far as this bundle uses it.
  *
- * Only `refresh` is called: after a migration changes which backend owns a
- * conversation, the list the sidebar shows is stale until the client re-reads
- * `session.list`. The service lives at `packages/api/session-controller/src/client/sessions/service.ts`,
- * where `refresh()` forwards to `SessionManager.refreshList()`.
+ * `refresh` reloads the sidebar, while `binding` reads an existing retained
+ * conversation without acquiring or releasing anybody else's reference.
+ * The implementation-specific rc1 recovery adapter is kept in session-recovery.ts.
  */
 export interface SessionsService {
   refresh(): Promise<void>
+  refreshProjections?(id: string): Promise<void>
+  binding?(id: string): { session: unknown } | undefined
 }
 
 /** Browser root context as far as this plugin is concerned. */

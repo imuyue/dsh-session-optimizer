@@ -49,6 +49,21 @@ export interface CatalogEntry {
   readonly updatedAt: number
 }
 
+/** Provenance supplied by a migration without changing its backend or timestamp. */
+export type CatalogProvenance = Omit<CatalogEntry, 'backend' | 'updatedAt'>
+
+function makeEntry(backend: SessionBackendId, provenance: CatalogProvenance, now: number): CatalogEntry {
+  return {
+    backend,
+    ...provenance.originSessionId === undefined ? {} : { originSessionId: provenance.originSessionId },
+    ...provenance.migrationId === undefined ? {} : { migrationId: provenance.migrationId },
+    ...provenance.sourceBackend === undefined ? {} : { sourceBackend: provenance.sourceBackend },
+    ...provenance.targetBackend === undefined ? {} : { targetBackend: provenance.targetBackend },
+    ...provenance.clonedAt === undefined ? {} : { clonedAt: provenance.clonedAt },
+    updatedAt: now,
+  }
+}
+
 /** The on-disk shape; `version` lets a future build refuse instead of guess. */
 export interface CatalogDocument {
   readonly version: 1
@@ -145,6 +160,8 @@ export class SessionBackendCatalog {
   private readonly entries: Map<string, CatalogEntry>
   private readonly path: string
   private dirty = false
+  private mutation = 0
+  private saving: Promise<void> | undefined
 
   private constructor(path: string, entries: Map<string, CatalogEntry>) {
     this.path = path
@@ -230,27 +247,62 @@ export class SessionBackendCatalog {
   route(
     id: string,
     backend: SessionBackendId,
-    provenance: {
-      readonly originSessionId?: string | undefined
-      readonly migrationId?: string | undefined
-      readonly sourceBackend?: SessionBackendId | undefined
-      readonly targetBackend?: SessionBackendId | undefined
-      readonly clonedAt?: number | undefined
-    } = {},
+    provenance: CatalogProvenance = {},
     now = Date.now(),
   ): CatalogEntry {
-    const entry: CatalogEntry = {
-      backend,
-      ...provenance.originSessionId === undefined ? {} : { originSessionId: provenance.originSessionId },
-      ...provenance.migrationId === undefined ? {} : { migrationId: provenance.migrationId },
-      ...provenance.sourceBackend === undefined ? {} : { sourceBackend: provenance.sourceBackend },
-      ...provenance.targetBackend === undefined ? {} : { targetBackend: provenance.targetBackend },
-      ...provenance.clonedAt === undefined ? {} : { clonedAt: provenance.clonedAt },
-      updatedAt: now,
-    }
+    const entry = makeEntry(backend, provenance, now)
     this.entries.set(id, entry)
+    this.mutation += 1
     this.dirty = true
     return entry
+  }
+
+  /**
+   * Publish a migration route only after its proposed document reached disk.
+   * Normal route/save callers keep their existing explicit dirty-map semantics.
+   * A competing update of this same id wins; never overwrite it during an await.
+   */
+  async commitRoute(
+    id: string,
+    backend: SessionBackendId,
+    provenance: CatalogProvenance = {},
+    now = Date.now(),
+  ): Promise<CatalogEntry> {
+    const expected = this.entries.get(id)
+    while (this.saving !== undefined) await this.saving
+    if (this.entries.get(id) !== expected) throw new CatalogError(`route for "${id}" changed before migration commit`, this.path)
+    const entry = makeEntry(backend, provenance, now)
+    const saving = this.persistRoute(id, entry, expected)
+    this.saving = saving
+    try {
+      await saving
+    } finally {
+      this.saving = undefined
+    }
+    if (this.entries.get(id) !== entry) throw new CatalogError(`route for "${id}" changed during migration commit`, this.path)
+    return entry
+  }
+
+  private async persistRoute(id: string, entry: CatalogEntry, expected: CatalogEntry | undefined): Promise<void> {
+    const mutation = this.mutation
+    const entries = new Map(this.entries)
+    entries.set(id, entry)
+    await this.writeDocument({
+      version: CATALOG_VERSION,
+      sessions: Object.fromEntries([...entries].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)),
+    })
+    if (this.entries.get(id) !== expected) {
+      // A route/forget/replaceAll overtook the proposed snapshot. Keep that map
+      // authoritative and serialize it before reporting the superseded commit.
+      this.dirty = true
+      await this.savePending()
+      throw new CatalogError(`route for "${id}" changed during migration commit`, this.path)
+    }
+    this.entries.set(id, entry)
+    this.mutation += 1
+    // The document includes every mutation observed before the await, but a
+    // different id may have changed while it was being written.
+    this.dirty = this.mutation !== mutation + 1
   }
 
   /** Record a route only when the session has none, so a restart keeps history. */
@@ -263,7 +315,7 @@ export class SessionBackendCatalog {
   /** Forget one session; used when a migration is rolled back. */
   forget(id: string): boolean {
     const removed = this.entries.delete(id)
-    if (removed) this.dirty = true
+    if (removed) { this.mutation += 1; this.dirty = true }
     return removed
   }
 
@@ -271,6 +323,7 @@ export class SessionBackendCatalog {
   replaceAll(next: Iterable<readonly [string, CatalogEntry]>): void {
     this.entries.clear()
     for (const [id, entry] of next) this.entries.set(id, entry)
+    this.mutation += 1
     this.dirty = true
   }
 
@@ -282,17 +335,40 @@ export class SessionBackendCatalog {
    * makes a document visible.
    */
   async save(): Promise<void> {
-    if (!this.dirty) return
-    const document: CatalogDocument = {
-      version: CATALOG_VERSION,
-      sessions: Object.fromEntries(this.list()),
+    if (this.saving !== undefined) {
+      await this.saving
+      if (this.dirty) await this.save()
+      return
     }
+    if (!this.dirty) return
+    const saving = this.savePending()
+    this.saving = saving
+    try {
+      await saving
+    } finally {
+      this.saving = undefined
+    }
+    if (this.dirty) await this.save()
+  }
+
+  private async savePending(): Promise<void> {
+    while (this.dirty) {
+      const mutation = this.mutation
+      const document: CatalogDocument = {
+        version: CATALOG_VERSION,
+        sessions: Object.fromEntries(this.list()),
+      }
+      await this.writeDocument(document)
+      this.dirty = this.mutation !== mutation
+    }
+  }
+
+  private async writeDocument(document: CatalogDocument): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true, mode: 0o700 })
     const staging = `${this.path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`
     try {
       await writeFile(staging, `${JSON.stringify(document, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
       await rename(staging, this.path)
-      this.dirty = false
     } catch (error) {
       await unlink(staging).catch(() => undefined)
       throw error

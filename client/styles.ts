@@ -66,7 +66,7 @@ const CSS = `
 .dshsql-page button { cursor: pointer; }
 .dshsql-page button:disabled { cursor: not-allowed; opacity: .45; }
 .dshsql-page button:focus-visible, .dshsql-page input:focus-visible,
-.dshsql-page summary:focus-visible { outline: 2px solid var(--dshsql-accent); outline-offset: 2px; }
+.dshsql-page select:focus-visible, .dshsql-page summary:focus-visible { outline: 2px solid var(--dshsql-accent); outline-offset: 2px; }
 
 /* Chrome */
 .dshsql-header {
@@ -274,7 +274,7 @@ const CSS = `
 /* --- settings view -------------------------------------------------------- */
 /* Narrower than the other views on purpose: a row of switches spread across a
    1400px panel reads as a form to fill in, while 920px reads as a settings page. */
-.dshsql-settings { max-width: 920px; }
+.dshsql-settings { max-width: 920px; margin: 0 auto; }
 .dshsql-settings-section {
   padding: 0 0 24px; margin-bottom: 24px;
   border-bottom: 1px solid var(--dshsql-border);
@@ -326,6 +326,14 @@ const CSS = `
   border-color: var(--dshsql-accent); background: var(--dshsql-active); color: var(--dshsql-text);
 }
 .dshsql-segmented button:disabled { cursor: default; opacity: 0.6; }
+.dshsql-language-select { width: 160px; flex: none; }
+.dshsql-performance-options { display: grid; gap: 12px; }
+.dshsql-performance-option { display: flex; align-items: center; gap: 8px; width: fit-content; cursor: pointer; }
+.dshsql-performance-option-secondary { margin-left: 24px; }
+.dshsql-performance-option:has(input:disabled) { color: var(--dshsql-muted); cursor: default; }
+.dshsql-performance-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.dshsql-performance-status { color: var(--dshsql-muted); font-size: var(--dshsql-small); }
+.dshsql-performance-error { margin: 12px 0 0; overflow-wrap: anywhere; }
 .dshsql-about-title { margin: 0 0 14px; font-size: 14px; font-weight: 600; }
 .dshsql-about-list .dshsql-kv-row { grid-template-columns: 150px 1fr; min-height: 44px; align-items: center; }
 .dshsql-about-list .dshsql-kv-row dd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

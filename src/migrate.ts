@@ -15,7 +15,7 @@
  *    into an inode the rename just unlinked;
  * 5. only then move the route in the catalog.
  *
- * The two modes differ in one thing: whether the copy keeps the identity.
+ * The modes differ in identity and naming of the new conversation.
  *
  * - **overwrite** keeps `session_id`, so the conversation is the same conversation
  *   and the session list does not grow an entry; it simply starts being read from
@@ -29,15 +29,16 @@
  *   two entries, and the clone opens and resumes like any other.
  *
  * Clone is deliberately *not* DSH's own fork: fork copies a prefix and adds
- * inherited-seed markers plus synthesized fork events, which changes what the
- * transcript means. A clone copies every event and changes only the identity.
+ * inherited-seed markers plus synthesized fork events. Cloning keeps the
+ * transcript content. Typed references inside its owned subagent tree are
+ * re-keyed together, and its new `副本-<source title>` title is appended.
  *
  * @module dsh-session-optimizer/migrate
  */
 
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
@@ -45,7 +46,11 @@ import { SessionBackendCatalog, type SessionBackendId } from './catalog.ts'
 import { SessionDatabase, ensureSessionDirectory, type LoadedHeader } from './database.ts'
 import { DATABASE_FILENAME, databasePath, decodeSegment, encodeSegment, sessionDir } from './format.ts'
 import { storedTitle } from './inspect.ts'
+import { planCloneTree, remapClone, assertTreeSnapshot, type CloneTree, type CloneNode } from './clone-tree.ts'
+import { groupedSessions } from './session-groups.ts'
+import { pickerInventory, pickerPage, forgetPickerInventory } from './source-picker.ts'
 import { SessionWriteLease } from './lease.ts'
+import { overlappingDirectories, sameDirectory } from './path-identity.ts'
 import { scanSessions } from './storage.ts'
 import {
   READ_SETTINGS,
@@ -57,6 +62,7 @@ import {
   listJsonlSessionDirs,
   mountJsonl,
   publishDatabase,
+  publishNewDatabase,
   readJsonlSession,
   readSqliteHeader,
   readSqliteSessionById,
@@ -93,6 +99,8 @@ export interface SourceLocator {
  */
 export interface MigrationBackend extends SourceLocator {
   readonly persistence?: SessionPersistence | undefined
+  /** Encoding required by a mounted JSONL provider, including an empty root. */
+  readonly compression?: JsonlCompression | undefined
 }
 
 export interface MigrationOptions {
@@ -159,6 +167,9 @@ export interface MigrationHost {
   readonly catalog: SessionBackendCatalog
   readonly sqlite: MigrationBackend
   readonly jsonl: MigrationBackend
+  readonly prepareSession?: (id: string, notice?: (message?: string) => void) => Promise<void>
+  /** Called after a clone's files and route are committed, only for the mounted pair. */
+  readonly attachClone?: (sourceId: string, targetId: string) => Promise<void>
 }
 
 /** A run in flight, as the console polls it. */
@@ -174,6 +185,7 @@ export interface MigrationJob {
   /** The report as it fills in; the items list grows while the run proceeds. */
   report?: MigrationReport
   error?: string
+  notice?: string
 }
 
 /**
@@ -190,6 +202,8 @@ const MIGRATION_HISTORY = 32
 /** Where the history lives, set by {@link attachMigrationJournal}. */
 let journalPath: string | undefined
 let journalTimer: NodeJS.Timeout | undefined
+let journalWrites: Promise<void> = Promise.resolve()
+let journalEpoch = 0
 /** Items kept per stored job; a run over hundreds of sessions must not grow the file. */
 const JOURNAL_ITEMS = 200
 
@@ -209,6 +223,7 @@ interface MigrationJournalDocument {
  * be half done, and the next run has to be started again.
  */
 export async function attachMigrationJournal(directory: string): Promise<void> {
+  journalEpoch++
   journalPath = join(directory, MIGRATION_JOURNAL_FILENAME)
   let text: string
   try {
@@ -250,26 +265,44 @@ function scheduleJournalSave(): void {
   journalTimer.unref?.()
 }
 
-async function saveJournal(): Promise<void> {
-  const path = journalPath
-  if (path === undefined) return
-  const jobs = [...migrationJobs.values()].map((job) => ({
-    ...job,
-    report: job.report === undefined
-      ? undefined
-      : { ...job.report, items: job.report.items.slice(-JOURNAL_ITEMS) },
-  }))
-  const document: MigrationJournalDocument = { version: MIGRATION_JOURNAL_VERSION, jobs }
-  const staging = `${path}.${String(process.pid)}.tmp`
-  try {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 })
-    await writeFile(staging, `${JSON.stringify(document)}\n`, { encoding: 'utf8', mode: 0o600 })
-    await rename(staging, path)
-  } catch {
-    // The history is a convenience; a read-only state directory must not turn a
-    // finished migration into a failed one.
-    await unlink(staging).catch(() => undefined)
+async function saveJournal(strict = false, clearing?: ReadonlyMap<string, MigrationJob>): Promise<number> {
+  const path = journalPath, epoch = journalEpoch
+  const commitClear = (): number => {
+    let count = 0
+    for (const [id, job] of clearing ?? []) if (migrationJobs.get(id) === job && job.status !== 'running') { migrationJobs.delete(id); count++ }
+    return count
   }
+  if (path === undefined) return commitClear()
+  let cleared = 0
+  const writing = journalWrites.catch(() => undefined).then(async () => {
+    if (journalEpoch !== epoch) {
+      if (strict) throw new Error('migration history changed while saving')
+      return
+    }
+    const jobs = [...migrationJobs.values()].filter(job => clearing?.get(job.id) !== job).map(job => ({ ...job, report: job.report === undefined ? undefined : { ...job.report, items: job.report.items.slice(-JOURNAL_ITEMS) } }))
+    const document: MigrationJournalDocument = { version: MIGRATION_JOURNAL_VERSION, jobs }
+    const staging = `${path}.${String(process.pid)}.${randomUUID()}.tmp`
+    try {
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 })
+      await writeFile(staging, `${JSON.stringify(document)}\n`, { encoding: 'utf8', mode: 0o600 })
+      await rename(staging, path)
+      if (clearing !== undefined) {
+        if (journalEpoch !== epoch) throw new Error('migration history changed while clearing')
+        cleared = commitClear()
+      }
+    } catch (error) { await unlink(staging).catch(() => undefined); throw error }
+  })
+  journalWrites = writing
+  try { await writing } catch (error) { if (strict) throw error }
+  return cleared
+}
+
+/** Clear finished history only; running/waiting work and session files are untouched. */
+export async function clearMigrationHistory(): Promise<{ cleared: number; retainedRunning: number }> {
+  const finished = new Map([...migrationJobs].filter(([, job]) => job.status !== 'running'))
+  if (journalTimer !== undefined) { clearTimeout(journalTimer); journalTimer = undefined }
+  const cleared = await saveJournal(true, finished)
+  return { cleared, retainedRunning: [...migrationJobs.values()].filter(job => job.status === 'running').length }
 }
 
 /** Forget the loaded history and stop writing to it (tests, and profile switches). */
@@ -278,7 +311,9 @@ export async function detachMigrationJournal(): Promise<void> {
     clearTimeout(journalTimer)
     journalTimer = undefined
   }
+  journalEpoch++
   journalPath = undefined
+  await journalWrites.catch(() => undefined)
   migrationJobs.clear()
 }
 
@@ -331,8 +366,28 @@ export function startMigration(
     status: 'running',
     startedAt: Date.now(),
   }
+  const historyEpoch = journalEpoch
   rememberMigration(job)
-  void runMigration(host.catalog, source, target, options)
+  let mounted: Promise<boolean> | undefined
+  const prepare = host.prepareSession === undefined ? undefined : async (id: string) => {
+    mounted ??= (async () => await sameDirectory(source.root, host[source.id].root)
+      || (options.mode === 'overwrite' && await sameDirectory(target.root, host[target.id].root)))()
+    if (await mounted) await host.prepareSession!(id, message => { job.notice = message })
+  }
+  let cloneMounted: Promise<boolean> | undefined
+  const attachClone = host.attachClone === undefined ? undefined : async (sourceId: string, targetId: string) => {
+    cloneMounted ??= (async () => await sameDirectory(source.root, host[source.id].root)
+      && await sameDirectory(target.root, host[target.id].root))()
+    if (await cloneMounted) await host.attachClone!(sourceId, targetId)
+  }
+  const run = async () => {
+    const mountedTarget = host[target.id]
+    const effectiveTarget = target.id === 'jsonl' && mountedTarget.compression !== undefined
+      && await sameDirectory(target.root, mountedTarget.root)
+      ? { ...target, compression: mountedTarget.compression } : target
+    return runMigration(host.catalog, source, effectiveTarget, options, prepare, attachClone)
+  }
+  void run()
     .then((report) => {
       job.report = report
       job.status = report.status === 'running' ? 'completed' : report.status
@@ -344,18 +399,40 @@ export function startMigration(
     })
     .finally(() => {
       job.finishedAt ??= Date.now()
-      // Persist the finished state, not just the start: an operator opening the
-      // console tomorrow sees how the run ended, not that it began.
-      rememberMigration(job)
+      // Persist only while this history still owns the exact job. Completion may
+      // arrive after teardown or a different journal has attached.
+      if (journalEpoch === historyEpoch && migrationJobs.get(job.id) === job) rememberMigration(job)
     })
   return job
 }
 
 function headerForClone(header: SessionHeader, id: SessionId): SessionHeader {
-  // Only the identity changes. `parentSession` and `delegationDepth` stay: they
-  // describe where these events came from, which is true of the copy too, and the
-  // catalog records the origin id for anything that needs the original.
+  // Fork ancestry is retained; owned subagent parent links were prepared by the tree plan.
   return { ...header, id }
+}
+
+function titleInLog(copy: LogCopy): string | undefined {
+  for (let index = copy.events.length - 1; index >= 0; index--) {
+    const event = copy.events[index]!
+    if (String(event.type) !== 'session/title') continue
+    const data: unknown = event.data
+    if (data !== null && typeof data === 'object' && 'title' in data && typeof data.title === 'string' && data.title !== '') return data.title
+  }
+  return undefined
+}
+function logForClone(copy: LogCopy, header: SessionHeader, id: SessionId): { log: LogCopy; title: string } {
+  let sourceTitle = titleInLog(copy)
+  if (sourceTitle === undefined && copy.header.origin === 'subagent') for (let index = copy.events.length - 1; index >= copy.inheritedEventCount; index--) {
+    const event = copy.events[index]!, data = event.data as unknown as { label?: unknown }
+    if (String(event.type) === 'subagent/descriptor' && typeof data?.label === 'string' && data.label !== '') { sourceTitle = data.label; break }
+  }
+  const title = `副本-${sourceTitle ?? '未命名'}`
+  const seq = copy.events.length === 0 ? copy.inheritedEventCount : Number(copy.events.at(-1)!.seq) + 1
+  if (!Number.isSafeInteger(seq) || seq < 0) throw new MigrationError('clone title has no valid next event sequence')
+  // session/title is a stored extension event; the published SessionEvent union
+  // does not describe it. The same readers and staged verification validate it.
+  const renamed = { type: 'session/title', seq, time: Date.now(), data: { title, messageSeqs: [], source: { kind: 'user' } } } as unknown as SessionEvent
+  return { title, log: { ...copy, header: headerForClone(header, id), events: [...copy.events, renamed] } }
 }
 
 /**
@@ -473,30 +550,49 @@ async function verifyStaged(
  * if the publish fails.
  */
 async function publishPath(staged: string, target: string): Promise<void> {
-  await ensureSessionDirectory(dirname(target))
-  if (!existsSync(target)) {
-    await rename(staged, target)
-    return
-  }
-  const previous = `${target}.replaced`
-  await rm(previous, { recursive: true, force: true })
-  await rename(target, previous)
+  await ensureSessionDirectory(target)
+  const previous = `${target}.replaced-${randomUUID()}`
+  await mkdir(previous, { mode: 0o700 })
+  const archived: string[] = [], published: string[] = []
   try {
-    await rename(staged, target)
+    for (const name of await readdir(target)) {
+      if (name === 'session.lock') continue
+      await rename(join(target, name), join(previous, name)); archived.push(name)
+    }
+    for (const name of await readdir(staged)) {
+      if (name === 'session.lock') continue
+      await rename(join(staged, name), join(target, name)); published.push(name)
+    }
   } catch (error) {
-    await rename(previous, target).catch((restoreError: unknown) => {
-      throw new AggregateError(
-        [error, restoreError],
-        `publish of "${target}" failed and the previous copy could not be restored`,
-      )
-    })
+    try {
+      for (const name of published.reverse()) await rename(join(target, name), join(staged, name))
+      for (const name of archived.reverse()) await rename(join(previous, name), join(target, name))
+    } catch (restoreError) { throw new AggregateError([error, restoreError], `publish of "${target}" failed; previous data remains in "${previous}"`) }
+    await rm(previous, { recursive: true, force: true })
     throw error
   }
   await rm(previous, { recursive: true, force: true })
 }
 
+/** Check the whole root under the publication lease, without a listing cache. */
+async function assertCloneAbsent(target: MigrationBackend, id: string, catalog: SessionBackendCatalog): Promise<void> {
+  const collision = (): never => { throw new MigrationError(`clone target "${id}" already exists in "${target.root}"`) }
+  if (catalog.get(id) !== undefined) collision()
+  if (target.id === 'jsonl') {
+    for (const entry of await listJsonlSessionDirs(target.root)) {
+      if (decodeSegment(entry.directory) === id && await findJsonlArtifact(target.root, id) !== undefined) collision()
+    }
+  } else {
+    for (const entry of await scanSqliteSessions(target.root)) {
+      if (decodeSegment(entry.directory) === id) collision()
+    }
+  }
+}
+
 /** One session a migration run could pick up, as a picker shows it. */
 export interface SourceSession {
+  readonly origin?: 'subagent'
+  readonly parentSession?: string
   readonly id: string
   readonly title: string | undefined
   readonly eventCount: number
@@ -522,6 +618,10 @@ export interface SourceSession {
    * happen". Present only when the caller named the other root.
    */
   readonly inTarget?: boolean
+  /** Metadata-only picker row: exact count and full integrity are checked at conversion. */
+  readonly detailsPending?: boolean
+  readonly titlePending?: boolean
+  readonly childCount?: number
 }
 
 /**
@@ -534,11 +634,12 @@ export interface SourceSession {
  * artifact, and the picker sees every log, including the ones that will need
  * salvage.
  */
-export async function sourceSessions(backend: SourceLocator): Promise<readonly SourceSession[]> {
+export async function sourceSessions(backend: SourceLocator, onlyIds?: ReadonlySet<string>): Promise<readonly SourceSession[]> {
   if (backend.id === 'jsonl') {
-    const listed = await inspectJsonlSessions(backend.root)
+    const listed = await inspectJsonlSessions(backend.root, onlyIds)
     return listed.map((entry) => ({
       id: entry.id,
+      ...(entry.origin === 'subagent' ? { origin: 'subagent' as const, ...(entry.parentSession === undefined ? {} : { parentSession: entry.parentSession }) } : {}),
       title: entry.title,
       eventCount: entry.eventCount,
       sizeBytes: entry.sizeBytes,
@@ -571,6 +672,7 @@ export async function sourceSessions(backend: SourceLocator): Promise<readonly S
     const id = String(header.header.id)
     found.push({
       id,
+      ...(header.header.origin === 'subagent' ? { origin: 'subagent' as const, ...(header.header.parentSession === undefined ? {} : { parentSession: String(header.header.parentSession) }) } : {}),
       title: storedTitle(entry.path),
       eventCount: header.eventCount,
       sizeBytes: await sizeOf(entry.path),
@@ -611,6 +713,35 @@ interface CachedListing {
 
 const LISTING_TTL_MS = 10_000
 const listings = new Map<string, CachedListing>()
+const listingScans = new Map<string, Promise<CachedListing>>()
+let listingGeneration = 0
+
+async function cachedSourceListing(backend: SourceLocator, refresh = false): Promise<CachedListing> {
+  const key = `${backend.id}\u0000${backend.root}`
+  const pending = listingScans.get(key)
+  if (pending !== undefined) return pending
+  const cached = listings.get(key)
+  if (!refresh && cached !== undefined && Date.now() - cached.at < LISTING_TTL_MS) return cached
+  const generation = listingGeneration
+  const scan = (async (): Promise<CachedListing> => {
+    const sessions = await sourceSessions(backend)
+    const entry = {
+      at: Date.now(),
+      encoding: backend.id === 'jsonl' ? await detectCompression(backend.root) : 'none' as const,
+      sessions: [...sessions].sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0) || left.id.localeCompare(right.id)),
+    }
+    if (generation === listingGeneration) listings.set(key, entry)
+    return entry
+  })()
+  listingScans.set(key, scan)
+  try { return await scan } finally { if (listingScans.get(key) === scan) listingScans.delete(key) }
+}
+
+/** Complete cached inventory, shared with the paged conversion picker. Read-only. */
+export async function sourceInventory(backend: SourceLocator, signal?: AbortSignal): Promise<readonly SourceSession[]> {
+  if (backend.id === 'jsonl') return pickerInventory(backend.root, false, signal)
+  return (await cachedSourceListing(backend)).sessions
+}
 
 /** Ids one backend holds, cached on the same schedule as the listings. */
 interface CachedIds {
@@ -712,29 +843,21 @@ export async function listSourceRoot(
     readonly refresh?: boolean | undefined
     readonly target?: SourceLocator | undefined
     readonly catalog?: SessionBackendCatalog | undefined
+    readonly summary?: boolean | undefined
+    readonly grouped?: boolean | undefined
+    readonly parent?: string | undefined
+    readonly signal?: AbortSignal | undefined
   } = {},
 ): Promise<SourceListing> {
-  const key = `${backend.id}\u0000${backend.root}`
-  const cached = listings.get(key)
-  const fresh = cached !== undefined && Date.now() - cached.at < LISTING_TTL_MS
-  let entry = cached
-  if (options.refresh === true || !fresh) {
-    const sessions = await sourceSessions(backend)
-    entry = {
-      at: Date.now(),
-      encoding: backend.id === 'jsonl' ? await detectCompression(backend.root) : 'none',
-      sessions: [...sessions].sort((left, right) => {
-        const leftAt = left.createdAt ?? 0
-        const rightAt = right.createdAt ?? 0
-        if (rightAt !== leftAt) return rightAt - leftAt
-        return left.id.localeCompare(right.id)
-      }),
-    }
-    listings.set(key, entry)
+  if (backend.id === 'jsonl' && options.summary === true) {
+    const offset = Math.max(0, Math.trunc(options.offset ?? 0))
+    const limit = Math.min(200, Math.max(1, Math.trunc(options.limit ?? 50)))
+    const page = await pickerPage(backend.root, { offset, limit, query:options.query, refresh:options.refresh, signal:options.signal, grouped:options.grouped, parent:options.parent })
+    const target = options.target === undefined ? undefined : idsWithOrigins(await heldIds(options.target), options.catalog)
+    options.signal?.throwIfAborted()
+    return { backend:backend.id,root:backend.root,encoding:page.encoding,offset,limit,total:page.total,sessions:target === undefined ? page.sessions : page.sessions.map(session => ({...session,inTarget:target.has(session.id)})) }
   }
-  // `entry` is set on both paths above; the assertion states that for the reader
-  // while keeping the cache lookup out of the return type.
-  const source = entry as CachedListing
+  const source = await cachedSourceListing(backend, options.refresh === true)
   const target = options.target === undefined
     ? undefined
     : idsWithOrigins(await heldIds(options.target), options.catalog)
@@ -742,9 +865,9 @@ export async function listSourceRoot(
     ? source.sessions
     : source.sessions.map((session) => ({ ...session, inTarget: target.has(session.id) }))
   const query = options.query?.trim().toLowerCase() ?? ''
-  const matched = query === ''
-    ? sessions
-    : sessions.filter((session) =>
+  const matched = options.grouped === true
+    ? groupedSessions(sessions, query, options.parent)
+    : query === '' ? sessions : sessions.filter((session) =>
       session.id.toLowerCase().includes(query)
       || (session.title ?? '').toLowerCase().includes(query))
   const offset = Math.max(0, Math.trunc(options.offset ?? 0))
@@ -762,24 +885,55 @@ export async function listSourceRoot(
 
 /** Forget cached listings and ids, after a run that wrote logs somewhere. */
 export function forgetListings(): void {
+  forgetPickerInventory()
+  listingGeneration++
+  listingScans.clear()
   listings.clear()
   knownIds.clear()
+}
+
+/** Take the same non-blocking writer lease as the source's own provider. */
+async function acquireSourceLease(
+  source: MigrationBackend,
+  entry: SourceSession,
+): Promise<{ release(): Promise<void> }> {
+  const dir = dirname(entry.path)
+  if (source.id === 'sqlite') return SessionWriteLease.acquire(dir, entry.id as SessionId)
+  return acquireJsonlLease(source, entry.id as SessionId, dir)
+}
+async function acquireJsonlLease(source: MigrationBackend, id: SessionId, dir: string): Promise<{ release(): Promise<void> }> {
+  const { persistence } = await mountJsonl(source.root)
+  // The official provider exposes this method on its concrete storage service.
+  // Use its arbiter (including the Windows semaphore), and the listed artifact's
+  // actual directory rather than deriving a new path from a legacy header.
+  const provider = persistence as typeof persistence & {
+    acquireLease(id: SessionId, cwd: string | undefined, dir: string): Promise<{ release(): Promise<void> }>
+  }
+  if (typeof provider.acquireLease !== 'function') {
+    throw new MigrationError('the JSONL provider does not expose its source writer lease')
+  }
+  return provider.acquireLease(id, undefined, dir)
 }
 
 /**
  * Run one migration over the selected sessions of the source backend.
  *
- * A failure is confined to its own session: one unreadable log must not stop a
- * run the operator asked for, and the item says what happened.
+ * Linked ownership is preflighted before any publication. Children publish first;
+ * a required child's failure prevents its parent from publishing a dangling catalog.
  */
 export async function runMigration(
   catalog: SessionBackendCatalog,
   source: MigrationBackend,
   target: MigrationBackend,
   options: MigrationOptions = DEFAULT_MIGRATION_OPTIONS,
+  prepareSession?: (id: string) => Promise<void>,
+  attachClone?: (sourceId: string, targetId: string) => Promise<void>,
 ): Promise<MigrationReport> {
   if (source.id === target.id) {
     throw new MigrationError(`source and target are both "${source.id}"; a migration needs two backends`)
+  }
+  if (await overlappingDirectories(source.root, target.root)) {
+    throw new MigrationError('source and target roots are the same physical directory or contain one another')
   }
   const startedAt = Date.now()
   const report: MigrationReport = {
@@ -794,14 +948,14 @@ export async function runMigration(
     items: [],
   }
   const encoding: JsonlCompression = target.id === 'jsonl'
-    ? await detectCompression(target.root)
+    ? target.compression ?? await detectCompression(target.root)
     : 'none'
-  const stagingRoot = `${target.root}.migrating`
+  const stagingRoot = join(`${target.root}.migrating`, report.migrationId)
 
-  const listed = await sourceSessions(source)
   const wanted = options.sessions === undefined || options.sessions.length === 0
     ? undefined
     : new Set(options.sessions)
+  const listed = await sourceSessions(source, options.session === undefined ? wanted : new Set([options.session]))
   const selected = options.session === undefined
     ? (wanted === undefined ? listed : listed.filter((entry) => wanted.has(entry.id)))
     : listed.filter((entry) => entry.id === options.session)
@@ -825,11 +979,77 @@ export async function runMigration(
     return report
   }
 
-  for (const entry of selected) {
+  const prepared = new Set<string>()
+  const prepareOnce = async (id: string) => { if (!prepared.has(id)) { await prepareSession?.(id); prepared.add(id) } }
+  const entries = new Map(selected.map(entry => [entry.id, entry]))
+  const candidatesFor = (id: string, explicit: boolean) => explicit ? [source] : catalog.backendOf(id) === target.id ? [target, source] : [source, target]
+  const factCache = new Map<string, Map<string, string> | undefined>()
+  const factsFor = async (id: string): Promise<Map<string, string> | undefined> => {
+    if (factCache.has(id)) return factCache.get(id)
+    for (const backend of candidatesFor(id, entries.has(id))) {
+      const copy = await readSource(backend, id)
+      if (!copy) continue
+      if (copy.incomplete || String(copy.header.id) !== id) throw new MigrationError(`cannot prove subagent ownership from incomplete or mismatched parent "${id}"`)
+      const facts = new Map<string, string>()
+      for (const event of copy.events) {
+        const data = event.data as unknown as { childId?: unknown; mode?: unknown }
+        if (String(event.type) === 'subagent/catalog' && Number(event.seq) >= copy.inheritedEventCount && data?.mode !== 'external' && typeof data?.childId === 'string' && typeof data.mode === 'string') {
+          if (facts.has(data.childId) && facts.get(data.childId) !== data.mode) throw new MigrationError(`conflicting subagent catalog facts in "${id}"`)
+          facts.set(data.childId, data.mode)
+        }
+      }
+      factCache.set(id, facts); return facts
+    }
+    factCache.set(id, undefined); return undefined
+  }
+  const canRebind = options.mode === 'clone' ? async (childId: string, actualParent: string, copiedParent: string): Promise<boolean> => {
+    let id = copiedParent, proven = false
+    const seen = new Set<string>()
+    for (let depth = 0; depth < 16 && !seen.has(id); depth++) {
+      seen.add(id)
+      const origin = catalog.get(id)?.originSessionId
+      if (origin === undefined) break
+      if (origin === actualParent) { proven = true; break }
+      id = origin
+    }
+    if (!proven) return false
+    const original = await factsFor(actualParent), copied = await factsFor(copiedParent)
+    return original?.has(childId) === true && original.get(childId) === copied?.get(childId)
+  } : undefined
+  let tree: CloneTree
+  try {
+    tree = await planCloneTree(selected.map(entry => entry.id), async (id, explicit) => {
+      await prepareOnce(id)
+      const candidates = candidatesFor(id, explicit)
+      for (const backend of candidates) {
+        const copy = await readSource(backend, id)
+        if (copy === undefined) continue
+        let path = explicit ? entries.get(id)?.path : undefined
+        if (path === undefined && backend.id === 'jsonl') path = (await findJsonlArtifact(backend.root, id))?.path
+        if (path === undefined && backend.id === 'sqlite') {
+          const expected = databasePath(backend.root, copy.header.cwd, copy.header.id)
+          if (existsSync(expected)) path = expected
+          else for (const artifact of await scanSqliteSessions(backend.root)) { if (String((await readSqliteHeader(artifact.path)).header.id) === id) { path = artifact.path; break } }
+        }
+        if (path === undefined) throw new MigrationError(`cannot locate the source artifact for required session "${id}"`)
+        return { source: backend, copy, path }
+      }
+      return undefined
+    }, options.mode === 'clone' ? options.newSessionId : undefined, options.mode === 'overwrite', canRebind)
+    if (options.mode === 'clone') for (const node of tree.nodes) await assertCloneAbsent(target, node.targetId, catalog)
+  } catch (error) {
+    const problem = error instanceof Error ? error.message : String(error)
+    for (const entry of selected) report.items.push({ sourceSession: entry.id, targetSession: options.newSessionId ?? entry.id, status: 'failed', expected: 0, transferred: 0, error: problem })
+    report.status = 'failed'; report.error = problem; report.finishedAt = Date.now(); return report
+  }
+  const work: Array<{ entry: SourceSession; source: MigrationBackend; targetId: string; node: CloneNode }> = tree.nodes.map(node => ({
+    entry: entries.get(node.sourceId) ?? { id: node.sourceId, title: undefined, problem: undefined, eventCount: 0, sizeBytes: 0, createdAt: node.header.createdAt, cwd: node.header.cwd, path: node.path },
+    source: node.source, targetId: node.targetId, node,
+  }))
+  const completed = new Set<string>()
+  for (const task of work) {
+    const { entry, source, targetId, node } = task
     const sourceId = entry.id
-    const targetId = options.mode === 'clone'
-      ? options.newSessionId ?? `session-${randomUUID()}`
-      : sourceId
     const item: MigrationItem = {
       sourceSession: sourceId,
       targetSession: targetId,
@@ -838,7 +1058,16 @@ export async function runMigration(
       transferred: 0,
     }
     report.items.push(item)
+    let cloneLease: SessionWriteLease | undefined
+    let sourceLease: { release(): Promise<void> } | undefined
     try {
+      if (node?.childIds.some(id => !completed.has(id))) throw new MigrationError(`required subagent copy for "${sourceId}" did not complete; parent copy was not published`)
+      await prepareOnce(entry.id)
+      if (options.mode === 'overwrite') sourceLease = await acquireSourceLease(source, entry)
+      if (options.mode === 'clone') {
+        cloneLease = await SessionWriteLease.acquire(target.root, targetId as SessionId)
+        await assertCloneAbsent(target, targetId, catalog)
+      }
       item.status = 'migrating'
       const copy = await readSource(source, sourceId)
       if (copy === undefined) {
@@ -846,20 +1075,28 @@ export async function runMigration(
         item.error = `the ${source.id} backend lists "${sourceId}" but cannot read it`
         continue
       }
+      if (copy.incomplete === true) {
+        throw new MigrationError(`the source log is incomplete; left the source and target unchanged (${copy.problem ?? 'streaming stopped at a broken record'})`)
+      }
       item.expected = copy.events.length
       // The conversation is about to live on *this* host, so its cwd is settled
       // before anything is written: the store's own validator, the project bucket
       // the log lands in, and the result the operator reads must all name one
       // path. A store keeps the mounted form (it is opened here); a JSONL log
       // keeps whatever the writer accepts, which is the same translation.
-      const portable = target.id === 'sqlite' ? storableHeader(copy.header) : headerOf(copy.header)
-      const write: LogCopy = options.mode === 'clone'
-        ? { ...copy, header: headerForClone(portable, targetId as SessionId) }
-        : { ...copy, header: portable }
+      assertTreeSnapshot(copy, node)
+      if (options.mode === 'overwrite' && source.id === target.id && await sameDirectory(source.root, target.root)) {
+        item.status = 'skipped'; item.title = titleInLog(copy); item.cwd = copy.header.cwd; completed.add(sourceId); continue
+      }
+      const snapshot = options.mode === 'clone' ? remapClone(copy, node, tree.ids) : copy
+      const portable = target.id === 'sqlite' ? storableHeader(snapshot.header) : headerOf(snapshot.header)
+      const cloned = options.mode === 'clone' ? logForClone(snapshot, portable, targetId as SessionId) : undefined
+      const write: LogCopy = cloned?.log ?? { ...copy, header: portable }
+      item.expected = write.events.length
 
       await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
       const staged = await stageCopy(target, stagingRoot, write, encoding)
-      item.transferred = copy.events.length
+      item.transferred = write.events.length
       if (options.verify) {
         item.status = 'verifying'
         const problem = await verifyStaged(target, stagingRoot, write)
@@ -876,7 +1113,11 @@ export async function runMigration(
         // directory before it renames. Taking a second one here would contend
         // with it — POSIX `flock` conflicts between two descriptors of the same
         // file even inside one process — so the lease stays in one place.
-        await publishDatabase(staged, final)
+        if (options.mode === 'clone') {
+          await publishNewDatabase(staged, final, async () => { await assertCloneAbsent(target, targetId, catalog) })
+        } else {
+          await publishDatabase(staged, final)
+        }
       } else {
         // Both encodings keep one directory per session, so the published unit
         // is the staging directory — the provider reads directories and rejects
@@ -886,34 +1127,54 @@ export async function runMigration(
         // loses its later appends to an unlinked inode with no error anywhere.
         // The lock lives inside the session directory, where the JSONL provider
         // puts it, so publishing contends with the same file a live writer holds.
-        const lease = await SessionWriteLease.acquire(
-          sessionDir(target.root, write.header.cwd, targetId as SessionId),
-          targetId as SessionId,
-        )
+        const lease = await acquireJsonlLease(target, targetId as SessionId, final)
         try {
-          await publishPath(staged, final)
+          if (options.mode === 'clone') {
+            await assertCloneAbsent(target, targetId, catalog)
+            if (existsSync(`${final}.replaced`)
+              || (await readdir(final)).some((name) => name !== 'session.lock')) {
+              throw new MigrationError(`clone target "${targetId}" already exists`)
+            }
+            const artifact = await findJsonlArtifact(stagingRoot, targetId)
+            if (artifact === undefined) throw new MigrationError(`staged clone "${targetId}" is missing`)
+            await link(artifact.path, join(final, basename(artifact.path)))
+          } else {
+            await publishPath(staged, final)
+          }
         } finally {
           await lease.release()
         }
       }
-      await rm(stagingRoot, { recursive: true, force: true })
+      await rm(stagingRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
       // The label the picker showed, carried into the result so a reader can
       // recognise the conversation instead of matching two opaque ids.
-      item.title = entry.title
+      item.title = cloned?.title ?? entry.title ?? titleInLog(write)
       item.cwd = write.header.cwd
 
       // The route moves only after the copy is in place and proven. A crash here
       // leaves the copy on disk with the catalog still naming the source, which
       // the router resolves by probing: no session is lost, and a later run
       // reconciles the two.
-      catalog.route(targetId, target.id, {
-        ...options.mode === 'clone' ? { originSessionId: sourceId, clonedAt: Date.now() } : {},
+      const previous = catalog.get(targetId)
+      await catalog.commitRoute(targetId, target.id, {
+        ...options.mode === 'clone' ? { originSessionId: sourceId, clonedAt: Date.now() }
+          : previous?.originSessionId === undefined ? {} : { originSessionId: previous.originSessionId, ...(previous.clonedAt === undefined ? {} : { clonedAt: previous.clonedAt }) },
         migrationId: report.migrationId,
         sourceBackend: source.id,
         targetBackend: target.id,
       })
-      await catalog.save()
       item.status = 'migrated'
+      completed.add(sourceId)
+      if (options.mode === 'clone') {
+        try {
+          await attachClone?.(sourceId, targetId)
+        } catch (error) {
+          // Files and routing are durable. Do not report a failed copy and invite
+          // another clone; expose the separate account failure on the created ID.
+          item.error = 'the new conversation was created, but its project group could not be preserved: '
+            + (error instanceof Error ? error.message : String(error))
+        }
+      }
 
       // An overwrite replaces the old conversation: the copy is now the one the
       // session list shows, and the source log must stop being a second copy of
@@ -936,6 +1197,12 @@ export async function runMigration(
     } catch (error) {
       item.status = 'failed'
       item.error = error instanceof Error ? error.message : String(error)
+    } finally {
+      try {
+        await sourceLease?.release()
+      } finally {
+        await cloneLease?.release()
+      }
     }
   }
 

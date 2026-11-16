@@ -21,6 +21,7 @@ import type { SessionHeader, SessionEvent, SessionId } from '@deepseek-ai/dsh-se
 import { validateStoredEvents } from '@deepseek-ai/dsh-session-persistence'
 
 import { ByteLru } from './lru.ts'
+import { currentPageTransferFormat, pageLinesWithinBudget, type PageTransferFormat } from './page-transfer.ts'
 import {
   FRAME_CACHE_BYTES,
   SessionDatabase,
@@ -357,22 +358,29 @@ function parsePage(
   page: LogPage,
   events: SessionEvent[],
 ): boolean {
-  if (page.count === 0) return true
   const before = events.length
-  let text: string
-  try {
-    text = decoder.decode(page.bytes)
-  } catch {
-    return false
+  let lines: readonly string[]
+  if (page.format === 'lines') {
+    if ('bytes' in page || !Array.isArray(page.lines) || page.lines.length !== page.count || !pageLinesWithinBudget(page.lines)) return false
+    lines = page.lines
+  } else {
+    if ((page.format !== undefined && page.format !== 'bytes') || 'lines' in page || !(page.bytes instanceof Uint8Array)) return false
+    if (page.count === 0) return page.bytes.byteLength === 0
+    try {
+      lines = decoder.decode(page.bytes).split('\n')
+    } catch {
+      return false
+    }
+    if (lines.length !== page.count) return false
   }
-  for (const line of text.split('\n')) {
+  for (const line of lines) {
     let parsed: unknown
     try {
       parsed = JSON.parse(line)
     } catch {
       return false
     }
-    if (parsed === null || typeof parsed !== 'object') return false
+    if (parsed === null || typeof parsed !== 'object' || (parsed as { seq?: unknown }).seq !== events.length) return false
     events.push(parsed as SessionEvent)
   }
   // A line count that disagrees with the page means a frame was cut or a row
@@ -396,26 +404,36 @@ export async function assemblePaged(
   signal: AbortSignal | undefined,
 ): Promise<LoadedSession | undefined> {
   const total = meta.eventCount
+  if (!Number.isSafeInteger(total) || total < 0) return undefined
+  signal?.throwIfAborted()
   const events: SessionEvent[] = []
   const decoder = new TextDecoder()
-  const queue: Array<Promise<LogPage | undefined>> = []
+  const queue: Array<{ from: number; to: number; pending: Promise<LogPage | undefined> }> = []
   let next = 0
   const push = (): void => {
     if (next >= total) return
     const from = next
     const to = Math.min(total, from + PAGE_EVENTS)
     next = to
-    queue.push(readPage(from, to))
+    const pending = readPage(from, to)
+    // Early decline/abort may leave prefetched pages unconsumed. Observing their
+    // rejection does not alter the original promise awaited for active pages.
+    void pending.catch(() => undefined)
+    queue.push({ from, to, pending })
   }
   for (let index = 0; index < PAGE_WINDOW; index += 1) push()
   while (queue.length > 0) {
     signal?.throwIfAborted()
-    const page = await (queue.shift() as Promise<LogPage | undefined>)
-    if (page === undefined) return undefined
-    if (page.firstSeq !== events.length) return undefined
+    const request = queue.shift()!
+    const page = await request.pending
+    signal?.throwIfAborted()
+    if (typeof page !== 'object' || page === null) return undefined
+    if (page.firstSeq !== request.from || page.firstSeq !== events.length ||
+      !Number.isSafeInteger(page.count) || page.count !== request.to - request.from) return undefined
     if (!parsePage(decoder, page, events)) return undefined
     push()
   }
+  signal?.throwIfAborted()
   if (events.length !== total) return undefined
   const location = { kind: 'sqlite', path }
   validateStoredEvents(meta.header, events, location)
@@ -475,7 +493,7 @@ export class InlineExecutor implements StorageExecutor {
     return assemblePaged(
       path,
       meta,
-      (from, to) => Promise.resolve(store.readPageBytes(from, to)),
+      (from, to) => Promise.resolve(store.readPageBytes(from, to, currentPageTransferFormat())),
       signal,
     )
   }
@@ -491,9 +509,9 @@ export class InlineExecutor implements StorageExecutor {
     return this.cache.get(path, settings).pagedHeader()
   }
 
-  /** One page of the log as bytes, for a client that drives the pages itself. */
-  readPage(path: string, settings: SqliteSettings, from: number, to: number): LogPage | undefined {
-    return this.cache.get(path, settings).readPageBytes(from, to)
+  /** One page of raw JSON; the Host selects the wire before posting work. */
+  readPage(path: string, settings: SqliteSettings, from: number, to: number, format: PageTransferFormat = currentPageTransferFormat()): LogPage | undefined {
+    return this.cache.get(path, settings).readPageBytes(from, to, format)
   }
 
   async trustedLength(path: string, settings: SqliteSettings): Promise<number | undefined> {

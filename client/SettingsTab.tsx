@@ -17,6 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Language, Text } from './i18n.ts'
 import type { PluginAbout, Preferences, SettingsAnswer } from './types.ts'
+import { PerformanceSettings } from './PerformanceSettings.tsx'
 
 /** How long the update check spins; the design specifies a moment, not a wait. */
 const CHECK_DELAY_MS = 500
@@ -127,74 +128,50 @@ export function SettingsTab({ text, answer, onPatch, onRefresh }: SettingsTabPro
                         <span className="dshsql-default-badge">{text.settings.default}</span>
                       ) : null}
                     </span>
-                    <p>
-                      {format === 'sqlite' ? text.settings.sqliteDescription : text.settings.jsonlDescription}
-                    </p>
-                    <p className="dshsql-suitable">
-                      {format === 'sqlite' ? text.settings.sqliteSuitable : text.settings.jsonlSuitable}
-                    </p>
+                    <p>{format === 'sqlite' ? text.settings.sqliteDescription : text.settings.jsonlDescription}</p>
+                    <p className="suitable">{format === 'sqlite' ? text.settings.sqliteSuitable : text.settings.jsonlSuitable}</p>
                   </button>
                 )
               })}
             </div>
           </section>
-
-          <section className="dshsql-settings-section">
-            <div className="dshsql-setting-row">
-              <div>
-                <h2>{text.settings.stability}</h2>
-                <p>{text.settings.stabilityDescription}</p>
-              </div>
-              <div className="dshsql-segmented" role="group" aria-label={text.settings.stability}>
-                <button
-                  type="button"
-                  data-active={fixes}
-                  aria-pressed={fixes}
-                  disabled={saving}
-                  onClick={() => { void patch({ stabilityFixes: true }) }}
-                >
-                  {text.settings.on}
-                </button>
-                <button
-                  type="button"
-                  data-active={!fixes}
-                  aria-pressed={!fixes}
-                  disabled={saving}
-                  onClick={() => { void patch({ stabilityFixes: false }) }}
-                >
-                  {text.settings.off}
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section className="dshsql-settings-section">
-            <div className="dshsql-setting-row">
-              <p className="dshsql-setting-label dshsql-setting-label-inline">{text.settings.language}</p>
-              <div className="dshsql-segmented" role="group" aria-label={text.settings.language}>
-                <button
-                  type="button"
-                  data-active={language === 'zh'}
-                  aria-pressed={language === 'zh'}
-                  disabled={saving}
-                  onClick={() => { void patch({ language: 'zh' }) }}
-                >
-                  简体中文
-                </button>
-                <button
-                  type="button"
-                  data-active={language === 'en'}
-                  aria-pressed={language === 'en'}
-                  disabled={saving}
-                  onClick={() => { void patch({ language: 'en' }) }}
-                >
-                  English
-                </button>
-              </div>
-            </div>
-          </section>
         </>
       )}
+
+      <PerformanceSettings
+        text={text.settings.performance}
+        stabilityControl={preferences === undefined ? undefined : (
+          <label className="dshsql-performance-option dshsql-performance-option-secondary">
+            <input
+              className="dshsql-check"
+              type="checkbox"
+              checked={fixes}
+              disabled={saving}
+              onChange={(event: { target: { checked: boolean } }) => { void patch({ stabilityFixes: event.target.checked }) }}
+            />
+            {text.settings.stability}
+          </label>
+        )}
+      />
+
+      <section className="dshsql-settings-section">
+        <div className="dshsql-setting-row">
+          <label className="dshsql-setting-label dshsql-setting-label-inline" htmlFor="dshsql-language">{text.settings.language}</label>
+          <select
+            id="dshsql-language"
+            className="dshsql-input dshsql-language-select"
+            value={language}
+            disabled={saving || preferences === undefined}
+            onChange={(event: { target: { value: string } }) => {
+              const next = event.target.value
+              if (next === 'zh' || next === 'en') void patch({ language: next })
+            }}
+          >
+            <option value="zh">简体中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </section>
 
       <section className="dshsql-settings-section">
         <h2 className="dshsql-about-title">DSH Session Optimizer</h2>

@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { closeSync, existsSync, mkdirSync, openSync, statSync, unlinkSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { zstdDecompressSync } from 'node:zlib'
 import {
   KNOWN_SESSION_EVENT_TYPES,
   SESSION_FORMAT_VERSION,
@@ -37,6 +38,7 @@ import {
   type EncodedChunk,
 } from './chunk.ts'
 import { ByteLru } from './lru.ts'
+import { pageLinesWithinBudget, type PageTransferFormat } from './page-transfer.ts'
 import { searchableText, semanticTextOf } from './search.ts'
 import {
   APPLICATION_ID,
@@ -84,12 +86,20 @@ export interface SqliteSettings {
   readonly seal?: boolean | undefined
 }
 
-/** A slice of the log as UTF-8 JSON lines, one per event. */
-export interface LogPage {
+/** Raw JSON lines, never parsed event objects, in either supported wire form. */
+export type LogPage = {
   readonly firstSeq: number
   readonly count: number
+} & ({
+  /** Absent on legacy byte pages. */
+  readonly format?: 'bytes'
   readonly bytes: Uint8Array
-}
+  readonly lines?: never
+} | {
+  readonly format: 'lines'
+  readonly lines: readonly string[]
+  readonly bytes?: never
+})
 
 /** A session row plus the committed event prefix. */
 export interface LoadedSession {
@@ -763,6 +773,9 @@ export class SessionDatabase {
   /** Rows written since the last seal, while the row budget has not been met. */
   private rowsSinceSeal = 0
 
+  /** Committed frame moves whose space reclamation still needs a retry. */
+  private pendingReclaimBytes = 0
+
   private constructor(
     private readonly db: DatabaseSync,
     readonly path: string,
@@ -789,10 +802,9 @@ export class SessionDatabase {
     private readonly writable: boolean = false,
   ) {
     this.frames = frames
-    // The path is in the key, not only the store uuid: two stores can be copies of
-    // one conversation (a clone, an exported copy), and they must not share frames
-    // — the copy is a different file that can be rewritten on its own.
-    this.framePrefix = `${path}\u0000`
+    // Each open owns a namespace: replacing a file can preserve both its path
+    // and store UUID while changing every payload under the same frame keys.
+    this.framePrefix = `${path}\u0000${randomUUID()}\u0000`
   }
 
   /**
@@ -878,6 +890,7 @@ export class SessionDatabase {
   }
 
   close(): void {
+    this.frames.deletePrefix(this.framePrefix)
     this.statements.clear()
     this.db.close()
   }
@@ -1274,12 +1287,16 @@ export class SessionDatabase {
   }
 
   private transaction<T>(body: () => T): T {
+    const rowsSinceSeal = this.rowsSinceSeal
     this.db.exec('BEGIN IMMEDIATE')
     try {
       const value = body()
       this.db.exec('COMMIT')
       return value
     } catch (error) {
+      this.rowsSinceSeal = rowsSinceSeal
+      this.proof = undefined
+      this.frames.deletePrefix(this.framePrefix)
       try {
         this.db.exec('ROLLBACK')
       } catch {
@@ -1496,8 +1513,8 @@ export class SessionDatabase {
             SET event_count = ?, revision = revision + 1, updated_at_ms = ?
           WHERE singleton = 1`,
       ).run(events.length, now)
+      this.resealAfterWrite(events.length)
     })
-    this.resealAfterWrite(events.length)
     // An import that never gets compacted leaves the whole log uncompressed
     // until the next append, and a conversation imported once may never be
     // appended to again.
@@ -1510,8 +1527,8 @@ export class SessionDatabase {
       this.statement(
         `UPDATE session SET state = 'ready', revision = revision + 1, updated_at_ms = ? WHERE singleton = 1`,
       ).run(Date.now())
+      this.reseal()
     })
-    this.reseal()
   }
 
   /** Current stored lifecycle state, without decoding the log. */
@@ -1522,12 +1539,11 @@ export class SessionDatabase {
 
   /** Materialize a session row without events: a flushed empty session. */
   materializeHeader(header: SessionHeader, inheritedEventCount: number): void {
-    const materialized = this.transaction(() => {
-      if (this.hasSessionRow()) return false
+    this.transaction(() => {
+      if (this.hasSessionRow()) return
       this.insertSessionRow(header, inheritedEventCount)
-      return true
+      this.resealAfterWrite()
     })
-    if (materialized) this.resealAfterWrite()
   }
 
   /**
@@ -1596,10 +1612,10 @@ export class SessionDatabase {
                 updated_at_ms = ?
           WHERE singleton = 1`,
       ).run(grown, Date.now())
+      // The contiguous events and their proof either commit together or roll
+      // back together; a rejected append must leave the cursor unchanged.
+      this.resealAfterWrite(events.length)
     })
-    // The batch is committed and contiguous by construction (checked above), so
-    // this is the one moment the whole log is known good without decoding it.
-    this.resealAfterWrite(events.length)
     this.sealIfAllowed()
   }
 
@@ -1670,8 +1686,8 @@ export class SessionDatabase {
                 updated_at_ms = ?
           WHERE singleton = 1`,
       ).run(truncateTo, Date.now())
+      this.reseal()
     })
-    this.reseal()
   }
 
   /**
@@ -1700,7 +1716,13 @@ export class SessionDatabase {
    */
   private sealIfAllowed(): void {
     if (!this.sealing) return
-    this.compact()
+    try {
+      this.compact()
+    } catch (error) {
+      // The append already committed. Leave its success visible to the handle;
+      // the next append retries compaction, and explicit compact still throws.
+      console.warn(`SQLite automatic compaction failed for "${this.path}"; will retry:`, error)
+    }
   }
 
   /**
@@ -1753,6 +1775,10 @@ export class SessionDatabase {
    * a sealed log — it seals only what is still rows.
    */
   compact(): void {
+    if (this.pendingReclaimBytes > 0) {
+      this.reclaim(this.pendingReclaimBytes)
+      this.pendingReclaimBytes = 0
+    }
     // A pure reader never gets here, but a store without the table must not be
     // handed a write it cannot place.
     if (!this.chunks) return
@@ -1835,13 +1861,13 @@ export class SessionDatabase {
       // so reading it needs nothing from this build that it did not already have.
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     })
-    // Outside the transaction: `incremental_vacuum` cannot run inside one. The
-    // pages the moved rows used are now free, and without this the file would
-    // only ever grow.
-    this.reclaim(movedBytes)
-    // Rows that were tail are frames now, and a frame key can be reused by a
-    // later seal, so anything decoded before this pass describes the old layout.
+    // Invalidate as soon as the layout commits, even if reclaiming space fails.
     this.frames.deletePrefix(this.framePrefix)
+    this.proof = undefined
+    this.pendingReclaimBytes += movedBytes
+    // Outside the transaction: `incremental_vacuum` cannot run inside one.
+    this.reclaim(this.pendingReclaimBytes)
+    this.pendingReclaimBytes = 0
   }
 
   /**
@@ -1947,6 +1973,111 @@ export class SessionDatabase {
       storeUuid: this.storeUuid,
       state: this.decodeState(row.state),
       updatedAtMs: row.updated_at_ms,
+    }
+  }
+
+  /**
+   * Advisory loading preview only. Never used by SessionPersistence or recovery.
+   * Declines without a seal instead of running the whole-log fallback. The
+   * metadata budget is checked before any BLOB reaches JavaScript, and the
+   * decompressor enforces its own output limit even if raw_bytes is dishonest.
+   */
+  loadPreviewWindow(): LoadedSession | undefined {
+    // Advisory text need not fill 768 events. Retry only preflight budget declines,
+    // never corruption or a missing proof; each attempt owns a fresh read snapshot.
+    for (const maxEvents of [768, 384, 192, 96, 48]) {
+      const result = this.tryPreviewWindow(maxEvents)
+      if (result !== 'budget') return result
+    }
+    return undefined
+  }
+
+  /** Recheck advisory-preview identity without reparsing header JSON. */
+  previewStillCurrent(loaded: LoadedSession): boolean {
+    const row = this.statement(`SELECT revision = ? AND state = 'ready' AND
+      (SELECT store_uuid FROM storage_meta WHERE singleton = 1) = ? AS same
+      FROM session WHERE singleton = 1`).get(loaded.revision, loaded.storeUuid) as { same: unknown } | undefined
+    return row?.same === 1
+  }
+
+  private tryPreviewWindow(maxEvents: number): LoadedSession | 'budget' | undefined {
+    const maxBytes = 2 * 1024 * 1024
+    this.db.exec('BEGIN')
+    try {
+      const headerSize = this.statement('SELECT length(CAST(header_json AS BLOB)) AS n FROM session WHERE singleton = 1').get() as { n: unknown } | undefined
+      if (headerSize === undefined || !Number.isSafeInteger(headerSize.n) || Number(headerSize.n) > 256 * 1024) return undefined
+      const sealSize = this.statement('SELECT length(CAST(marker AS BLOB)) + length(CAST(checksum AS BLOB)) AS n FROM session_seal WHERE singleton = 1').get() as { n: unknown } | undefined
+      if (sealSize === undefined || !Number.isSafeInteger(sealSize.n) || Number(sealSize.n) > 4096) return undefined
+      const identitySize = this.statement('SELECT length(CAST(store_uuid AS BLOB)) AS n FROM storage_meta WHERE singleton = 1').get() as { n: unknown } | undefined
+      if (identitySize === undefined || !Number.isSafeInteger(identitySize.n) || Number(identitySize.n) > 256) return undefined
+      const loaded = this.loadHeader()
+      // A materialized snapshot can retain seed/parent provenance without an
+      // external inherited prefix. The seal and contiguous local seqs still have
+      // to prove the stored log; no parent lookup or recovery runs on this path.
+      if (loaded === undefined || loaded.state !== 'ready' || loaded.inheritedEventCount !== 0 ||
+        (loaded.header.parentSession !== undefined && !loaded.header.isSeeded) ||
+        (loaded.header.delegationDepth ?? 0) !== 0) return undefined
+      const tailCount = Number((this.statement('SELECT count(*) AS n FROM session_event').get() as { n: unknown }).n)
+      const chunkCount = this.chunks
+        ? Number((this.statement('SELECT count(*) AS n FROM event_chunk').get() as { n: unknown }).n) : 0
+      // Only indexed seal/vocabulary metadata may cover this bounded tail;
+      // event JSON and decompression remain under the 2 MiB window budget.
+      if (tailCount > 100000 || chunkCount > 4096) return undefined
+      if (this.chunks) {
+        const vocabularySize = Number((this.statement('SELECT coalesce(sum(length(CAST(types_json AS BLOB))), 0) AS n FROM event_chunk').get() as { n: unknown }).n)
+        if (!Number.isSafeInteger(vocabularySize) || vocabularySize > 512 * 1024) return undefined
+      }
+      const total = this.trustedLength()
+      if (total === undefined || total === 0) return undefined
+      const from = Math.max(0, total - maxEvents)
+      const sealedEnd = this.sealedRows().end
+      const frames: Array<{ first_seq: number; last_seq: number; event_count: number; raw_bytes: number; compressed_bytes: number; actual_bytes: number; codec: string }> = []
+      if (this.chunks && from < sealedEnd) {
+        const anchor = this.statement('SELECT first_seq FROM event_chunk WHERE first_seq <= ? ORDER BY first_seq DESC LIMIT 1').get(from) as { first_seq: number } | undefined
+        if (anchor === undefined) return undefined
+        frames.push(...this.statement(`SELECT first_seq, last_seq, event_count, raw_bytes, compressed_bytes,
+          length(payload) AS actual_bytes, codec FROM event_chunk
+          WHERE first_seq >= ? AND first_seq < ? ORDER BY first_seq LIMIT 9`).all(anchor.first_seq, total) as typeof frames)
+      }
+      if (frames.length > 8) return 'budget'
+      let rawBytes = 0
+      let compressedBytes = 0
+      for (const frame of frames) {
+        if (![frame.first_seq, frame.last_seq, frame.event_count, frame.raw_bytes, frame.compressed_bytes, frame.actual_bytes].every(Number.isSafeInteger) ||
+          frame.first_seq < 0 || frame.event_count < 1 || frame.last_seq !== frame.first_seq + frame.event_count - 1 ||
+          frame.raw_bytes < 1 || frame.compressed_bytes < 1 || frame.compressed_bytes !== frame.actual_bytes || frame.codec !== CHUNK_CODEC) return undefined
+        rawBytes += frame.raw_bytes
+        compressedBytes += frame.actual_bytes
+        if (rawBytes > maxBytes || compressedBytes > maxBytes) return 'budget'
+      }
+      const tailFrom = Math.max(from, sealedEnd)
+      const tailBytes = Number((this.statement(`SELECT coalesce(sum(length(CAST(event_json AS BLOB))), 0) AS n
+        FROM session_event WHERE seq >= ? AND seq < ?`).get(tailFrom, total) as { n: unknown }).n)
+      if (!Number.isSafeInteger(tailBytes) || tailBytes < 0) return undefined
+      if (rawBytes + tailBytes > maxBytes) return 'budget'
+      const events: SessionEvent[] = []
+      for (const frame of frames) {
+        const row = this.statement('SELECT payload FROM event_chunk WHERE first_seq = ?').get(frame.first_seq) as { payload: Uint8Array } | undefined
+        if (row === undefined) return undefined
+        const output = zstdDecompressSync(row.payload, { maxOutputLength: Math.min(maxBytes, frame.raw_bytes) })
+        if (output.byteLength !== frame.raw_bytes) return undefined
+        const lines = output.toString('utf8').split('\n')
+        if (lines.length !== frame.event_count) return undefined
+        events.push(...decodeChunkRange(lines, { firstSeq: frame.first_seq }, from, total))
+      }
+      for (const row of this.statement('SELECT seq, event_type, event_time_ms, event_json FROM session_event WHERE seq >= ? AND seq < ? ORDER BY seq').iterate(tailFrom, total) as Iterable<EventRow>) {
+        const event: unknown = JSON.parse(String(row.event_json))
+        if (!isRecord(event) || event.seq !== row.seq || event.type !== row.event_type || event.time !== row.event_time_ms) return undefined
+        events.push(event as unknown as SessionEvent)
+      }
+      if (events.length !== total - from || events.some((event, i) => event.seq !== from + i)) return undefined
+      validateStoredEvents(loaded.header, events, { kind: 'sqlite', path: this.path })
+      return { ...loaded, events, eventCount: total, tornTruncateTo: undefined, path: this.path }
+    } catch {
+      // The optional preview never masks the official reader's diagnostics.
+      return undefined
+    } finally {
+      this.db.exec('ROLLBACK')
     }
   }
 
@@ -2064,20 +2195,22 @@ export class SessionDatabase {
   }
 
   /**
-   * One page of the log as UTF-8 JSON lines, `[from, to)`.
+   * One page of raw JSON lines, `[from, to)`; bytes remain the default wire.
    *
-   * Deliberately returns bytes rather than events. A page is read in the storage
-   * thread and parsed on the caller's: sending the text means the parse starts as
-   * soon as the bytes arrive, while sending parsed objects would put a structured
-   * clone of every event between the two (measured: 860ms of a 2.1s read).
+   * The opt-in lines format skips UTF-8 encode/decode and join/split. It still
+   * parses events on the caller and preserves the original SQL/frame checks.
+   * Oversize string pages fall back to the existing transferable byte format.
    *
    * `undefined` means the page is not there as asked — a row missing, a frame
    * that no longer decodes, or a range that left the log. The caller then reads
    * the whole log the slow way, which reports the exact cut.
    */
-  readPageBytes(from: number, to: number): LogPage | undefined {
-    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < from) return undefined
-    if (from === to) return { firstSeq: from, count: 0, bytes: new Uint8Array(0) }
+  readPageBytes(from: number, to: number, format: PageTransferFormat = 'bytes'): LogPage | undefined {
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < from) return undefined
+    if (format !== 'bytes' && format !== 'lines') return undefined
+    if (from === to) return format === 'lines'
+      ? { firstSeq: from, count: 0, format: 'lines', lines: [] }
+      : { firstSeq: from, count: 0, bytes: new Uint8Array(0) }
     const lines: string[] = []
     const sealedEnd = this.sealedRows().end
     try {
@@ -2126,6 +2259,9 @@ export class SessionDatabase {
       return undefined
     }
     if (lines.length !== to - from) return undefined
+    if (format === 'lines' && pageLinesWithinBudget(lines)) {
+      return { firstSeq: from, count: to - from, format: 'lines', lines }
+    }
     return { firstSeq: from, count: to - from, bytes: new TextEncoder().encode(lines.join('\n')) }
   }
 

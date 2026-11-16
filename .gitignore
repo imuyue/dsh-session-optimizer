@@ -16,3 +16,6 @@ coverage/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 历史设计记录、开发探针与发行包：保留在本机，不随仓库发布
+archive/

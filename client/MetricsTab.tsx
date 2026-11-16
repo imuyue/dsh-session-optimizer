@@ -238,7 +238,8 @@ export function MetricsTab({ text, locale }: { text: Text; locale: string }) {
   return (
     <>
       <div className="dshsql-metric-summary">
-        <span>{text.metrics.window(Math.round(snapshot.windowMs / 60_000))}</span>
+        <span>{text.metrics.window(Math.ceil(snapshot.windowMs / 60_000))}</span>
+        <span className="dshsql-muted">{text.metrics.retention(snapshot.retention)}</span>
         <span><strong className="dshsql-num">{snapshot.count}</strong> {text.metrics.samples}</span>
         <span><strong className="dshsql-num">{snapshot.errors}</strong> {text.metrics.failures}</span>
         <span className="dshsql-muted">{text.metrics.bucket(Math.round(snapshot.bucketMs / 1000))}</span>

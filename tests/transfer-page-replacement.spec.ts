@@ -1,0 +1,6 @@
+import { expect, it } from 'vitest'
+import { replaceTransferPage, resetTransferPages } from '../client/transfer-pagination.ts'
+import type { SourceListing } from '../client/types.ts'
+const page=(offset:number,ids:string[]):SourceListing=>({backend:'jsonl',root:'C:/sessions',total:123,offset,limit:50,encoding:'zstd',sessions:ids.map(id=>({id,eventCount:0,sizeBytes:10,path:id,detailsPending:true}))})
+it('replaces visible rows on next and previous rather than appending',()=>{let s=resetTransferPages({generation:0,listing:undefined});s=replaceTransferPage(s,s.generation,page(0,['one']));s=replaceTransferPage(s,s.generation,page(50,['two']));expect(s.listing!.sessions.map(x=>x.id)).toEqual(['two']);s=replaceTransferPage(s,s.generation,page(0,['one']));expect(s.listing!.sessions.map(x=>x.id)).toEqual(['one'])})
+it('rejects stale root/query generations and malformed page sizes',()=>{let s=resetTransferPages({generation:0,listing:undefined});const g=s.generation;s=replaceTransferPage(s,g,page(0,['one']));const now=resetTransferPages(s);expect(replaceTransferPage(now,g,page(50,['stale']))).toBe(now);expect(replaceTransferPage(s,g,{...page(50,['two']),root:'C:/other'})).toBe(s);expect(replaceTransferPage(s,g,{...page(50,['two']),limit:0})).toBe(s);expect(replaceTransferPage(s,g,{...page(50,['two']),offset:-1})).toBe(s)})

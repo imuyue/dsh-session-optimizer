@@ -1,0 +1,6 @@
+operation,before_ms,after_ms,note
+window_100_at_0,4.85,2.05,head window
+window_500_at_20000,10.64,8.52,mid window
+page_500_steady,10.60,6.74,steady state page
+backfill_95_pages,936.00,814.00,95 pages x 500 events
+append_one,2.45,1.25,60 rounds of 3x40KB

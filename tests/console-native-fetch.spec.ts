@@ -1,0 +1,38 @@
+import { afterEach, expect, it, vi } from 'vitest'
+import { fetchOverview, fetchSource, saveSettings } from '../client/api.ts'
+import { performanceFetch } from '../client/performance-transport.ts'
+afterEach(() => { vi.unstubAllGlobals() })
+it('uses the native page Fetch for all console pages and writes, with a relative API path', async () => {
+  vi.stubGlobal('document', { baseURI: 'dsh://desktop/' })
+  const plain = vi.fn(() => { throw new Error('bare fetch must not run') })
+  vi.stubGlobal('fetch', plain)
+  const native = vi.fn(async (path: string, init?: RequestInit) => new Response(JSON.stringify(path.includes('source?') ? { total: 1, sessions: [] } : init?.method === 'POST' ? { format: 'jsonl' } : { sessions: 623 })))
+  vi.stubGlobal('__DSH_TRANSPORT__', { fetch: native })
+  await expect(fetchOverview()).resolves.toMatchObject({ sessions: 623 })
+  await fetchSource({ backend: 'jsonl', root: 'C:\\sessions', query: 'test & 文' })
+  await saveSettings({ format: 'jsonl' })
+  await performanceFetch('performance')
+  expect(native.mock.calls[0]![0]).toBe('api/session-optimizer/overview?offset=0&limit=50')
+  expect(new URL(native.mock.calls[1]![0], 'http://host/').searchParams.get('root')).toBe('C:\\sessions')
+  expect(new URL(native.mock.calls[1]![0], 'http://host/').searchParams.get('q')).toBe('test & 文')
+  expect(native.mock.calls[2]![1]?.body).toBe('{"format":"jsonl"}')
+  expect(plain).not.toHaveBeenCalled()
+})
+it('does not replay failed native mutations on browser Fetch', async () => {
+  vi.stubGlobal('document', { baseURI: 'http://host/prefix/' })
+  const plain = vi.fn()
+  const native = vi.fn(async () => { throw new Error('native write failed') })
+  vi.stubGlobal('fetch', plain)
+  vi.stubGlobal('__DSH_TRANSPORT__', { fetch: native })
+  await expect(saveSettings({ stabilityFixes: false })).rejects.toThrow('native write failed')
+  expect(native).toHaveBeenCalledTimes(1)
+  expect(plain).not.toHaveBeenCalled()
+})
+it('keeps authenticated Web mount prefixes without a native carrier', async () => {
+  vi.stubGlobal('document', { baseURI: 'https://host/prefix/' })
+  vi.stubGlobal('__DSH_TRANSPORT__', undefined)
+  const plain = vi.fn(async () => new Response('{"sessions":2}'))
+  vi.stubGlobal('fetch', plain)
+  await fetchOverview()
+  expect(plain.mock.calls[0]![0]).toBe('https://host/prefix/api/session-optimizer/overview?offset=0&limit=50')
+})

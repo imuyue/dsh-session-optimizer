@@ -34,6 +34,8 @@ export interface InspectTarget {
 
 /** One conversation as the space-usage table shows it. */
 export interface InspectUsage {
+  readonly origin?: 'subagent'
+  readonly parentSession?: string
   readonly id: string
   /** Newest `session/title` in the log, when the conversation has one. */
   readonly title: string | undefined
@@ -526,6 +528,7 @@ function rowOf(entry: { directory: string; path: string }, read: ReadResult): Us
     usage: {
       id: header?.id ?? String(row?.session_id ?? basename(entry.directory)),
       title: read.title,
+      ...(header?.origin === 'subagent' ? { origin: 'subagent' as const, ...(header.parentSession === undefined ? {} : { parentSession: String(header.parentSession) }) } : {}),
       eventCount: row === undefined ? read.counted.total : Number(row.event_count),
       sizeBytes: fileBytes(entry.path),
       walBytes: fileBytes(`${entry.path}-wal`),

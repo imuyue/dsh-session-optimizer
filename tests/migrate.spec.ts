@@ -238,8 +238,9 @@ describe('clone migration', () => {
 
     const stored = sqliteEvents(databasePath(sqliteRoot, '/work/migrate', 'session-clone-1' as SessionId))
     expect(stored.header?.id).toBe('session-clone-1')
-    // Every event came across: a clone changes the identity, not the transcript.
-    expect(stored.events.map((event) => event.type)).toEqual(['turn/start', 'turn/end'])
+    // Every original event is preserved; only the new conversation is renamed.
+    expect(stored.events.slice(0, -1).map((event) => event.type)).toEqual(['turn/start', 'turn/end'])
+    expect(stored.events.at(-1)).toMatchObject({ type: 'session/title', seq: 2, data: { title: '副本-未命名' } })
 
     // Both logs are live: the original is still on disk under its own id.
     expect(existsSync(join(sessionDir(jsonlRoot, '/work/migrate', 'session-origin' as SessionId), 'session.v4.jsonl'))).toBe(true)
@@ -277,7 +278,8 @@ describe('clone migration', () => {
     const row = listed.find((entry) => entry.id === 'session-listed-copy')
     expect(row).toBeDefined()
     expect(row?.cwd).toBe('/work/migrate')
-    expect(row?.eventCount).toBe(2)
+    expect(row?.eventCount).toBe(3)
+    expect(row?.title).toBe('副本-未命名')
     expect(row?.problem).toBeUndefined()
     // The original stays listed too: a clone adds a conversation, it does not move one.
     expect(listed.some((entry) => entry.id === 'session-listed')).toBe(false)

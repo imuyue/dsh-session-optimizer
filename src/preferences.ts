@@ -28,24 +28,75 @@ export type SessionFormat = 'sqlite' | 'jsonl'
 /** Console language. */
 export type Language = 'zh' | 'en'
 
+/** Explicit opt-in gates for the two experimental loading paths. */
+export interface PerformancePreferences {
+  readonly enabled: boolean
+  readonly historyWindow: boolean
+  readonly virtualChat: boolean
+}
+
+export const DEFAULT_PERFORMANCE_PREFERENCES: PerformancePreferences = Object.freeze({
+  enabled: false,
+  historyWindow: false,
+  virtualChat: false,
+})
+
 /** Everything the settings view can change. */
 export interface Preferences {
   readonly format: SessionFormat
   readonly stabilityFixes: boolean
   readonly language: Language
+  readonly performance: PerformancePreferences
+}
+
+/** Old callers may still write the original three fields. */
+export type PreferencesInput = Omit<Preferences, 'performance'> & { readonly performance?: PerformancePreferences }
+export type PreferencesPatch = Partial<Omit<Preferences, 'performance'>> & {
+  readonly performance?: Partial<PerformancePreferences>
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
   format: 'sqlite',
   stabilityFixes: true,
   language: 'zh',
+  performance: DEFAULT_PERFORMANCE_PREFERENCES,
 }
 
 /** Name of the file inside the profile's state directory. */
 export const PREFERENCES_FILENAME = 'console-settings.json'
 
 /** The keys a settings POST may name. */
-const SETTINGS_KEYS: ReadonlySet<string> = new Set(['format', 'stabilityFixes', 'language'])
+const SETTINGS_KEYS: ReadonlySet<string> = new Set(['format', 'stabilityFixes', 'language', 'performance'])
+const PERFORMANCE_KEYS = ['enabled', 'historyWindow', 'virtualChat'] as const
+
+/** File reads are tolerant per field; requests use the strict parser below. */
+export function performancePreferencesOf(value: unknown): PerformancePreferences {
+  const record = typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown> : {}
+  return Object.freeze({
+    enabled: typeof record.enabled === 'boolean' ? record.enabled : false,
+    historyWindow: typeof record.historyWindow === 'boolean' ? record.historyWindow : false,
+    virtualChat: typeof record.virtualChat === 'boolean' ? record.virtualChat : false,
+  })
+}
+
+export function performancePatchOf(value: unknown): Partial<PerformancePreferences> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new PreferencesUsageError('performance must be an object')
+  }
+  const record = value as Record<string, unknown>
+  const keys = Object.keys(record)
+  if (keys.length === 0) throw new PreferencesUsageError('name at least one performance setting')
+  const patch: { enabled?: boolean; historyWindow?: boolean; virtualChat?: boolean } = {}
+  for (const key of keys) {
+    if (!PERFORMANCE_KEYS.includes(key as typeof PERFORMANCE_KEYS[number])) {
+      throw new PreferencesUsageError(`unknown performance setting "${key.slice(0, 32)}"`)
+    }
+    if (typeof record[key] !== 'boolean') throw new PreferencesUsageError(`performance.${key} must be a boolean`)
+    patch[key as typeof PERFORMANCE_KEYS[number]] = record[key]
+  }
+  return patch
+}
 
 /** Where the preferences for `directory` live. */
 export function preferencesPath(directory: string): string {
@@ -83,22 +134,24 @@ function asLanguage(value: unknown): Language | undefined {
  */
 export function readPreferences(
   path: string,
-  fallback: Preferences = DEFAULT_PREFERENCES,
+  fallback: PreferencesInput = DEFAULT_PREFERENCES,
 ): Preferences {
+  const defaults = Object.freeze({ ...fallback, performance: performancePreferencesOf(fallback.performance) })
   let parsed: unknown
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'))
   } catch {
-    return fallback
+    return defaults
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return fallback
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return defaults
   const record = parsed as Record<string, unknown>
   const stability = record.stabilityFixes
-  return {
-    format: asFormat(record.format) ?? fallback.format,
-    stabilityFixes: typeof stability === 'boolean' ? stability : fallback.stabilityFixes,
-    language: asLanguage(record.language) ?? fallback.language,
-  }
+  return Object.freeze({
+    format: asFormat(record.format) ?? defaults.format,
+    stabilityFixes: typeof stability === 'boolean' ? stability : defaults.stabilityFixes,
+    language: asLanguage(record.language) ?? defaults.language,
+    performance: performancePreferencesOf(record.performance),
+  })
 }
 
 /**
@@ -108,11 +161,11 @@ export function readPreferences(
  * old file or the new one, never half of a JSON document. The mode is set on the
  * temp file as well as afterwards, so the content is never briefly world-readable.
  */
-export function writePreferences(path: string, preferences: Preferences): void {
+export function writePreferences(path: string, preferences: PreferencesInput): void {
   const directory = dirname(path)
   mkdirSync(directory, { recursive: true, mode: 0o700 })
   const temp = `${path}.${String(process.pid)}.tmp`
-  writeFileSync(temp, `${JSON.stringify(preferences, undefined, 2)}\n`, { mode: 0o600 })
+  writeFileSync(temp, `${JSON.stringify({ ...preferences, performance: performancePreferencesOf(preferences.performance) }, undefined, 2)}\n`, { mode: 0o600 })
   try {
     renameSync(temp, path)
   } catch (error) {
@@ -135,12 +188,12 @@ export function writePreferences(path: string, preferences: Preferences): void {
  * for the same reason — silently dropping it lets a client believe it saved
  * something it did not.
  */
-export function patchOf(body: Record<string, unknown>): Partial<Preferences> {
+export function patchOf(body: Record<string, unknown>): PreferencesPatch {
   const unknown = Object.keys(body).find((key) => !SETTINGS_KEYS.has(key))
   if (unknown !== undefined) {
     throw new PreferencesUsageError(`unknown setting "${unknown.slice(0, 32)}"`)
   }
-  const patch: { format?: SessionFormat; stabilityFixes?: boolean; language?: Language } = {}
+  const patch: { format?: SessionFormat; stabilityFixes?: boolean; language?: Language; performance?: Partial<PerformancePreferences> } = {}
   if ('format' in body) {
     const format = asFormat(body.format)
     if (format === undefined) throw new PreferencesUsageError('format must be "sqlite" or "jsonl"')
@@ -155,8 +208,9 @@ export function patchOf(body: Record<string, unknown>): Partial<Preferences> {
     if (language === undefined) throw new PreferencesUsageError('language must be "zh" or "en"')
     patch.language = language
   }
+  if ('performance' in body) patch.performance = performancePatchOf(body.performance)
   if (Object.keys(patch).length === 0) {
-    throw new PreferencesUsageError('name at least one of format, stabilityFixes or language')
+    throw new PreferencesUsageError('name at least one of format, stabilityFixes, language or performance')
   }
   return patch
 }
@@ -172,6 +226,8 @@ export interface PreferencesHost {
   read(): Preferences
   /** Persist and apply a partial change; throws {@link PreferencesUsageError}. */
   update(body: Record<string, unknown>): Preferences
+  /** Changes are published only after persistence; disposal is idempotent. */
+  subscribe(listener: (preferences: Preferences) => void): () => void
 }
 
 /**
@@ -207,15 +263,20 @@ export function createPreferencesHost(
   // this mount can serve (a SQLite-only mount seeded with "jsonl"). It is coerced
   // here rather than at first write, so an unrelated patch can never copy an
   // unservable format into the file.
-  const seeded: Preferences = servable({ ...DEFAULT_PREFERENCES, ...seed })
+  const seeded: Preferences = servable({ ...DEFAULT_PREFERENCES, ...seed, performance: performancePreferencesOf(seed?.performance) })
   // Per field, and for every failure mode: a file that exists but says only
   // `{"language":"en"}`, an empty or truncated file, `null`, `[]`, or a directory
   // where the file should be all keep the seed instead of falling back to SQLite.
   let stored: Preferences = readPreferences(path, seeded)
-  let current = servable(stored)
+  let current = Object.freeze(servable(stored))
+  const listeners = new Set<(preferences: Preferences) => void>()
   apply(current)
   return {
     read: () => current,
+    subscribe: (listener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
     update: (body: Record<string, unknown>) => {
       const patch = patchOf(body)
       // Only a format the caller names is judged: a file that still says
@@ -224,12 +285,23 @@ export function createPreferencesHost(
       if (named !== undefined && !formats.includes(named)) {
         throw new PreferencesUsageError(`the "${named}" backend is not mounted in this profile`)
       }
-      const next: Preferences = { ...stored, ...patch }
-      const served = servable(next)
+      const next: Preferences = Object.freeze({
+        ...stored, ...patch,
+        performance: Object.freeze({ ...stored.performance, ...patch.performance }),
+      })
+      const served = Object.freeze(servable(next))
       writePreferences(path, next)
-      apply(served)
+      // Disk is now authoritative. Publish the same state even if an optional
+      // consumer's apply callback throws; it must not leave leases on old gates.
       stored = next
       current = served
+      try {
+        apply(served)
+      } finally {
+        for (const listener of [...listeners]) {
+          try { listener(current) } catch { /* An observer cannot undo a saved configuration. */ }
+        }
+      }
       return served
     },
   }

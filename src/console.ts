@@ -24,18 +24,26 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { resolve } from 'node:path'
+import { overlappingDirectories } from './path-identity.ts'
+import type { WorkspaceMembershipSnapshot } from './migration-workspace.ts'
 import type { PluginAbout } from './about.ts'
 import type { SqliteSettings } from './database.ts'
 import { discoverRoots } from './discover.ts'
-import { inspectOverview, type InspectTarget } from './inspect.ts'
+import type { InspectTarget } from './inspect.ts'
+import { inspectConsoleOverview } from './console-overview.ts'
+import { pickerTitles } from './source-picker.ts'
 import type { MetricsRegistry } from './metrics.ts'
 import { PreferencesUsageError, type PreferencesHost, type SessionFormat } from './preferences.ts'
+import { PerformanceConflictError, type PerformanceController } from './performance.ts'
+import { registerPerformanceRpc, type PerformanceRpcRegistry } from './performance-rpc.ts'
+import { PAGE_TRANSFER_POLICY } from './page-transfer.ts'
+import type { PreviewReader } from './history-preview.ts'
 import { clearDiagnostics, listDiagnostics, recordDiagnostic, uninstallCheck } from './diagnostics.ts'
 import type { SearchHit } from './search.ts'
 import {
   DEFAULT_MIGRATION_OPTIONS,
   listMigrations,
+  clearMigrationHistory,
   listSourceRoot,
   migrationById,
   startMigration,
@@ -55,6 +63,7 @@ export const CONSOLE_ROUTE_PREFIX = '/api/session-optimizer'
  * Web transport package just to reach it, and `connection` is injected by name.
  */
 interface ConsoleTransport {
+  readonly rpc?: PerformanceRpcRegistry
   readonly fetch: {
     register(route: {
       readonly path: string
@@ -86,6 +95,7 @@ export interface ConsoleConfig {
    * rather than offering a button that cannot work.
    */
   readonly migrations?: MigrationHost | undefined
+  readonly workspaceMemberships?: ((ids: readonly string[]) => WorkspaceMembershipSnapshot | undefined) | undefined
   /**
    * The operator's own switches, present only when the mount created them.
    *
@@ -110,6 +120,8 @@ export interface ConsoleConfig {
    * own and the inline and worker mounts answer identically.
    */
   readonly search?: ((query: string, limit: number) => Promise<SearchHit[]>) | undefined
+  readonly performance?: PerformanceController | undefined
+  readonly historyPreview?: Pick<PreviewReader, 'read'> | undefined
 }
 
 /** A JSON response a browser must never cache. */
@@ -201,8 +213,35 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
 
   // One question, one answer: what is in this root and is it healthy. The panel
   // shows it as four totals, a space-usage table and the pragmas in force.
-  register('/overview', ['GET'], () =>
-    Promise.resolve(guard(() => json(inspectOverview(target)))))
+  register('/overview', ['GET'], async (request) => {
+    const params = new URL(request.url).searchParams
+    const offset = numberParam(params.get('offset')), limit = numberParam(params.get('limit'))
+    if (offset === null || limit === null || (offset !== undefined && !Number.isSafeInteger(offset)) || limit === 0) return failure('invalid overview page', 400)
+    let ids: string[] | undefined
+    if (params.has('ids')) {
+      try { const value: unknown = JSON.parse(params.get('ids')!); if (!Array.isArray(value) || value.length > 5 || !value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 256)) return failure('invalid title identities',400); ids = value as string[] } catch { return failure('invalid title identities',400) }
+    }
+    const parent = params.get('parent') ?? undefined
+    if (parent !== undefined && (parent.length === 0 || parent.length > 256)) return failure('invalid parent identity',400)
+    try { return json(await inspectConsoleOverview(target, config.jsonlRoot, config.migrations?.catalog, { offset: offset ?? 0, limit: limit ?? 50, signal: request.signal, titles: params.get('titles') === '1', ...(parent === undefined ? {} : { parent }), ...(ids === undefined ? {} : { ids }) })) }
+    catch (error) { return failure(error instanceof Error ? error.message : String(error), 500) }
+  })
+
+  register('/titles', ['GET'], async request => {
+    const params = new URL(request.url).searchParams
+    let ids: string[]
+    try {
+      const value: unknown = JSON.parse(params.get('ids') ?? 'null')
+      if (!Array.isArray(value) || value.length > 5 || !value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 256)) return failure('invalid title identities', 400)
+      ids = [...new Set(value as string[])]
+    } catch { return failure('invalid title identities', 400) }
+    const root = params.get('root') || config.jsonlRoot
+    if (root === undefined) return failure('this mount has no JSONL root', 400)
+    try {
+      const titles = await pickerTitles(root, new Set(ids), request.signal)
+      return json({ titles: ids.map(id => { const value = titles.get(id); return value === undefined ? { id, removed: true, titlePending: false } : { id, ...value, titlePending: false } }) })
+    } catch (error) { return failure(error instanceof Error ? error.message : String(error), 500) }
+  })
 
   // Real latencies only: an empty registry reports empty series rather than
   // invented points, and the client says so instead of drawing a flat line.
@@ -212,7 +251,7 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
         if (config.metrics === undefined) {
           return json({ available: false, reason: 'this profile has no metrics registry', snapshot: undefined })
         }
-        return json({ available: !config.metrics.empty, snapshot: config.metrics.snapshot() })
+        return json({ available: !config.metrics.empty, snapshot: config.metrics.historySnapshot() })
       }),
     ))
 
@@ -250,6 +289,10 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     )
   })
 
+  register('/migrations/clear', ['POST'], async () => {
+    try { return json(await clearMigrationHistory()) } catch (error) { return failure(error instanceof Error ? error.message : String(error), 500) }
+  })
+
   // Every root this machine actually has, so the operator picks one instead of
   // typing a path from memory. Discovery only lists directories.
   register('/roots', ['GET'], async () => {
@@ -269,6 +312,8 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     const backend = params.get('backend') === 'sqlite' ? 'sqlite' : 'jsonl'
     const root = params.get('root')
     if (root === null || root === '') return failure('the root parameter is required', 400)
+    const parent = params.get('parent')
+    if (parent !== null && (parent.length === 0 || parent.length > 256)) return failure('invalid parent session id', 400)
     const offset = numberParam(params.get('offset'))
     const limit = numberParam(params.get('limit'))
     if (offset === null || limit === null) {
@@ -284,6 +329,10 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
           ...(limit === undefined ? {} : { limit }),
           ...(params.get('q') === null ? {} : { query: params.get('q') ?? '' }),
           refresh: params.get('refresh') === '1',
+           summary: params.get('summary') === '1',
+           grouped: params.get('grouped') === '1',
+           ...(params.get('parent') === null ? {} : { parent: params.get('parent')! }),
+          signal: request.signal,
           // The opposite root lets the listing say which conversations it already
           // holds: an operator who cannot see that converts the same conversation
           // twice and wonders why nothing changed.
@@ -299,6 +348,18 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     } catch (error) {
       return failure(error instanceof Error ? error.message : String(error), 500)
     }
+  })
+
+  register('/workspace-memberships', ['GET'], async request => {
+    let ids: string[]
+    try {
+      const value: unknown = JSON.parse(new URL(request.url).searchParams.get('ids') ?? 'null')
+      if (!Array.isArray(value) || value.length > 50 || !value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 256)) return failure('invalid session identities', 400)
+      ids = [...new Set(value as string[])]
+    } catch { return failure('invalid session identities', 400) }
+    request.signal.throwIfAborted()
+    const snapshot = config.workspaceMemberships?.(ids)
+    return json({ available: snapshot !== undefined, memberships: snapshot?.memberships ?? [], workspaces: snapshot?.workspaces ?? [], dshVersion: config.about?.().dshVersion })
   })
 
   register('/migrate', ['POST'], async (request: Request) => {
@@ -331,8 +392,8 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     if (jsonlRoot === undefined || jsonlRoot === '') {
       return failure('the JSONL root is unknown: pass jsonlRoot (this profile exposes no default)', 400)
     }
-    if (resolve(jsonlRoot) === resolve(sqliteRoot)) {
-      return failure('the JSONL and SQLite roots are the same directory', 400)
+    if (await overlappingDirectories(jsonlRoot, sqliteRoot)) {
+      return failure('the JSONL and SQLite roots are the same directory or contain one another', 400)
     }
     const sessions = stringListField(body, 'sessions')
     const options: MigrationOptions = {
@@ -357,6 +418,12 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
   const aboutOf = (): PluginAbout | undefined => {
     const about = config.about
     return typeof about === 'function' ? about() : undefined
+  }
+
+  // A Root whose optional controls yielded to an existing owner must not mount
+  // duplicate unavailable routes. A console with no owner keeps its old surface.
+  if (config.performance !== undefined || !Object.hasOwn(globalThis, PAGE_TRANSFER_POLICY)) {
+    registerPerformanceConsole(ctx, config)
   }
 
   // What the settings view shows: the switches in force, which of them this
@@ -399,6 +466,7 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     }
     const body = await bodyOf(request)
     if (body === undefined) return failure('a JSON object body is required', 400)
+    if (Object.hasOwn(body, 'performance')) return failure('use the versioned performance endpoint for performance settings', 400)
     try {
       return json(config.preferences.host.update(body))
     } catch (error) {
@@ -440,5 +508,74 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
         return failure(`cannot compare the two roots: ${message}`, 500)
       },
     )
+  })
+}
+
+/** Mount only the optional performance surface; never mounts storage or query services. */
+export function registerPerformanceConsole(ctx: Context, config: Pick<ConsoleConfig, 'performance' | 'historyPreview'>): void {
+  const transport = (ctx as ConsoleContext).connection
+  const routes = new Map<string, { methods: readonly string[]; fetch(request: Request): Promise<Response> }>()
+  const register = (path: string, methods: readonly ('GET' | 'HEAD' | 'POST')[], fetch: (request: Request) => Promise<Response>): void => {
+    routes.set(path.slice(1), { methods, fetch })
+    transport.fetch.register({ path: `${CONSOLE_ROUTE_PREFIX}${path}`, methods, requestBody: 'buffered', fetch })
+  }
+  register('/performance', ['GET', 'POST'], async (request: Request) => {
+    const host = config.performance
+    if (host === undefined) return json({ available: false, reason: 'performance controls are unavailable' }, 409)
+    if (request.method !== 'POST') return json(host.read())
+    if (!(request.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json')) return failure('this endpoint accepts application/json bodies only', 415)
+    const body = await bodyOf(request)
+    if (body === undefined || Object.keys(body).some((key) => key !== 'patch' && key !== 'expectedRevision') || typeof body.expectedRevision !== 'string' || body.expectedRevision.length > 128) {
+      return failure('patch and expectedRevision are required', 400)
+    }
+    try { return json(host.update(body.patch, body.expectedRevision)) } catch (error) {
+      if (error instanceof PerformanceConflictError) return json({ error: error.message, state: host.read() }, 409)
+      if (error instanceof PreferencesUsageError) return failure(error.message, 400)
+      return failure(`performance settings write failed: ${String(error)}`, 500)
+    }
+  })
+
+  register('/performance/disable', ['POST'], async (request: Request) => {
+    const host = config.performance
+    if (host === undefined) return failure('performance controls are unavailable', 409)
+    if (!(request.headers.get('content-type') ?? '').toLowerCase().startsWith('application/json')) return failure('this endpoint accepts application/json bodies only', 415)
+    const body = await bodyOf(request)
+    if (body === undefined || Object.keys(body).some((key) => key !== 'expectedRevision') || typeof body.expectedRevision !== 'string' || body.expectedRevision.length > 128) return failure('expectedRevision is required', 400)
+    try { return json(host.disableAll(body.expectedRevision)) } catch (error) {
+      if (error instanceof PerformanceConflictError) return json({ error: error.message, state: host.read() }, 409)
+      return failure(`performance settings write failed: ${String(error)}`, 500)
+    }
+  })
+
+  register('/history-preview', ['GET'], async (request: Request) => {
+    const host = config.performance
+    const reader = config.historyPreview
+    const url = new URL(request.url)
+    const id = url.searchParams.get('id')
+    if (host === undefined || reader === undefined) return json({ available: false, reason: 'preview unavailable' })
+    const state = host.read()
+    if (url.searchParams.get('revision') !== state.revision) return json({ available: false, reason: 'configuration changed' })
+    if (id === null || id.length === 0 || id.length > 256) return failure('a bounded session id is required', 400)
+    if (request.signal.aborted) return json({ available: false, reason: 'cancelled' })
+    const lease = host.acquire('historyWindow', request.signal)
+    if (lease === undefined) return json({ available: false, reason: 'preview disabled' })
+    try {
+      const answer = await reader.read(id, lease.signal)
+      if (!lease.isCurrent()) return json({ available: false, reason: 'configuration changed' })
+      return json({ ...answer, configurationRevision: state.revision, generation: lease.generation })
+    } catch {
+      return json({ available: false, reason: 'preview declined; official loading continues' })
+    } finally { lease.dispose() }
+  })
+  register('/performance/client-report', ['POST'], async request => {
+    const host = config.performance
+    if (host === undefined) return failure('performance controls are unavailable', 409)
+    try { host.reportClient(await bodyOf(request)); return json({ accepted: true }) } catch (error) {
+      return failure(error instanceof Error ? error.message : 'invalid Client report', 400)
+    }
+  })
+  if (transport.rpc !== undefined) ctx.inject(['connection', 'webServer'], (rpcCtx) => {
+    const rpc = (rpcCtx as ConsoleContext).connection.rpc
+    if (rpc !== undefined) registerPerformanceRpc(rpc, routes)
   })
 }

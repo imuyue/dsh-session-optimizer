@@ -52,18 +52,12 @@ export interface LatencySampleRecord {
 }
 
 /**
- * Samples kept per op.
+ * Samples kept per op, independent of elapsed time.
  *
- * The snapshot summarises a five-minute window, so this is also the rate the
- * chart can honestly show: 8192 samples over 300 s is 27 calls per second, and a
- * busier store loses its oldest samples before they leave the window, which makes
- * the chart under-report rather than lie about the shape. Doubling the capacity
- * rather than the window is deliberate — an operator reads the last few minutes.
+ * Each operation retains its newest 8192 real calls. The rolling snapshot and
+ * retained-history view share those measurements without expiring the journal.
  */
 const MAX_SAMPLES = 8192
-
-/** Drop this share of the ring at once when it is full, instead of one per push. */
-const TRIM_SHIFT = 2
 
 /** Window the snapshot summarises. */
 const WINDOW_MS = 5 * 60_000
@@ -134,6 +128,7 @@ function round(value: number): number {
  */
 export class MetricsRegistry {
   private readonly rings = new Map<MetricOp, Sample[]>()
+  private readonly cursors = new Map<MetricOp, number>()
   private readonly since = Date.now()
   private totalCount = 0
   private totalErrors = 0
@@ -148,15 +143,18 @@ export class MetricsRegistry {
       this.rings.set(op, ring)
     }
     const at = Date.now()
-    ring.push({ at, ms, ok })
-    // `splice(0, 1)` on every push would memmove the whole ring on the hot path;
-    // dropping a quarter of it amortises the cost over the next few thousand
-    // samples. The window filter in `snapshot` does not depend on the ring being
-    // exactly full.
-    if (ring.length > MAX_SAMPLES) ring.splice(0, ring.length - (MAX_SAMPLES >> TRIM_SHIFT))
+    this.push(op, ring, { at, ms, ok })
     this.totalCount += 1
     this.lastAt = at
     if (!ok) this.totalErrors += 1
+  }
+
+  /** Circular overwrite keeps exactly the declared bound without hot-path shifts. */
+  private push(op: MetricOp, ring: Sample[], sample: Sample): void {
+    if (ring.length < MAX_SAMPLES) { ring.push(sample); return }
+    const cursor = this.cursors.get(op) ?? 0
+    ring[cursor] = sample
+    this.cursors.set(op, (cursor + 1) % MAX_SAMPLES)
   }
 
   /** Time `body`, recording success or failure under `op`. */
@@ -172,18 +170,14 @@ export class MetricsRegistry {
     }
   }
 
-  /**
-   * Samples inside the trailing window, for the on-disk journal.
-   *
-   * Only the window is exported: the file's purpose is to survive a restart, and
-   * a sample the snapshot would not count is dead weight in it.
-   */
-  exportSamples(now = Date.now()): LatencySampleRecord[] {
-    const from = now - WINDOW_MS
+  /** All retained samples, independent of the display window. */
+  exportSamples(_now = Date.now()): LatencySampleRecord[] {
     const records: LatencySampleRecord[] = []
     for (const op of METRIC_OPS) {
-      for (const sample of this.rings.get(op) ?? []) {
-        if (sample.at < from) continue
+      const ring = this.rings.get(op) ?? []
+      const start = this.cursors.get(op) ?? 0
+      for (let index = 0; index < ring.length; index += 1) {
+        const sample = ring[(start + index) % ring.length]!
         records.push({ op, at: sample.at, ms: sample.ms, ok: sample.ok })
       }
     }
@@ -191,37 +185,34 @@ export class MetricsRegistry {
     return records
   }
 
-  /**
-   * Put back samples read from the journal, keeping the ones that still matter.
-   *
-   * Anything unknown, malformed, or already outside the window is dropped instead
-   * of being reported as a call this process made: the panel's claim is "these are
-   * real calls", and a restored row is only honest while the window still shows it.
-   * Returns how many were kept.
-   */
+  /** Merge validated journal records, retaining the newest bounded history. */
   restoreSamples(records: readonly LatencySampleRecord[], now = Date.now()): number {
-    const from = now - WINDOW_MS
-    let kept = 0
+    const existing = this.exportSamples()
+    const key = (row: LatencySampleRecord): string => JSON.stringify([row.op, row.at, row.ms, row.ok])
+    const counts = new Map<string, number>()
+    for (const row of existing) counts.set(key(row), (counts.get(key(row)) ?? 0) + 1)
+    const added: LatencySampleRecord[] = []
     for (const record of records) {
+      if (typeof record !== 'object' || record === null) continue
       if (!(METRIC_OPS as readonly string[]).includes(record.op)) continue
       if (!Number.isFinite(record.at) || !Number.isFinite(record.ms)) continue
-      if (record.at < from || record.at > now + BUCKET_MS || record.ms < 0) continue
+      if (record.at < 0 || record.at > now + BUCKET_MS || record.ms < 0 || typeof record.ok !== 'boolean') continue
+      const identity = key(record), copies = counts.get(identity) ?? 0
+      if (copies > 0) { counts.set(identity, copies - 1); continue }
+      added.push(record)
+    }
+    this.rings.clear()
+    this.cursors.clear()
+    for (const record of [...existing, ...added].sort((a, b) => a.at - b.at)) {
       const op = record.op as MetricOp
       let ring = this.rings.get(op)
-      if (ring === undefined) {
-        ring = []
-        this.rings.set(op, ring)
-      }
-      ring.push({ at: record.at, ms: record.ms, ok: record.ok !== false })
-      if (ring.length > MAX_SAMPLES) ring.splice(0, ring.length - (MAX_SAMPLES >> TRIM_SHIFT))
-      this.totalCount += 1
-      if (record.ok === false) this.totalErrors += 1
-      // `lastAt` stays untouched on purpose: the warm-up reads it as "is the
-      // application busy right now", and a call made by the previous process says
-      // nothing about this one.
-      kept += 1
+      if (ring === undefined) { ring = []; this.rings.set(op, ring) }
+      this.push(op, ring, { at: record.at, ms: record.ms, ok: record.ok })
     }
-    return kept
+    this.totalCount += added.length
+    this.totalErrors += added.filter(row => !row.ok).length
+    // Restored activity must not mark the current process busy for warm-up.
+    return added.length
   }
 
   /** True when nothing has been measured yet. */
@@ -241,10 +232,20 @@ export class MetricsRegistry {
     return this.lastAt
   }
 
+  /** Display all retained measurements; idle time never erases the history. */
+  historySnapshot(now = Date.now()): MetricsSnapshot {
+    let from = now - WINDOW_MS
+    for (const ring of this.rings.values()) {
+      for (const sample of ring) from = Math.min(from, sample.at - 1)
+    }
+    return this.snapshot(now, now - from)
+  }
+
   /** Summaries and time series for every op, over the trailing window. */
-  snapshot(now = Date.now()): MetricsSnapshot {
-    const from = now - WINDOW_MS
-    const buckets = Math.ceil(WINDOW_MS / BUCKET_MS)
+  snapshot(now = Date.now(), windowMs = WINDOW_MS): MetricsSnapshot {
+    const from = now - windowMs
+    const bucketMs = Math.max(BUCKET_MS, Math.ceil(windowMs / 60 / BUCKET_MS) * BUCKET_MS)
+    const buckets = Math.ceil(windowMs / bucketMs)
     const ops: MetricsSeries[] = []
     // The header says "in the last N minutes", so it has to count the window,
     // not the process: after five idle minutes every row reads 0 while a
@@ -265,8 +266,8 @@ export class MetricsRegistry {
       const durations: number[] = []
       let errors = 0
       for (const sample of ring) {
-        if (sample.at < from) continue
-        const index = Math.min(buckets - 1, Math.floor((sample.at - from) / BUCKET_MS))
+        if (sample.at < from || sample.at > now) continue
+        const index = Math.min(buckets - 1, Math.floor((sample.at - from) / bucketMs))
         const into = grouped[index]
         if (into === undefined) continue
         into.push(sample.ms)
@@ -282,7 +283,7 @@ export class MetricsRegistry {
         const values = grouped[index] ?? []
         values.sort((a, b) => a - b)
         series.push({
-          t: from + index * BUCKET_MS,
+          t: from + index * bucketMs,
           count: values.length,
           errors: bucketErrors[index] ?? 0,
           p50: round(percentile(values, 0.5)),
@@ -310,8 +311,8 @@ export class MetricsRegistry {
     return {
       since: this.since,
       now,
-      windowMs: WINDOW_MS,
-      bucketMs: BUCKET_MS,
+      windowMs,
+      bucketMs,
       retention: MAX_SAMPLES,
       count: windowCount,
       errors: windowErrors,

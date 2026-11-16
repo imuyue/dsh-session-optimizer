@@ -17,8 +17,10 @@
  * @module dsh-session-optimizer/client/library
  */
 
+import type { MigrationReport } from './types.ts'
+
 /** Something that reacts to a change in the stored conversations. */
-type Listener = () => void
+type Listener = (report?: MigrationReport) => void
 
 const listeners = new Set<Listener>()
 
@@ -38,10 +40,10 @@ export function onLibraryChanged(listener: Listener): () => void {
  * Every listener runs; a throwing one does not keep the rest from running, since
  * one panel's failed redraw must not leave the Shell's list stale.
  */
-export function announceLibraryChanged(): void {
+export function announceLibraryChanged(report?: MigrationReport): void {
   for (const listener of [...listeners]) {
     try {
-      listener()
+      listener(report)
     } catch {
       // A redraw is best effort: the migration already committed on disk.
     }

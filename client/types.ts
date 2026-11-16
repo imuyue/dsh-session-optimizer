@@ -11,6 +11,10 @@
 
 /** One conversation as the space-usage table shows it. */
 export interface UsageRow {
+  origin?: 'subagent'
+  parentSession?: string
+  childCount?: number
+  removed?: boolean
   id: string
   /** Newest `session/title` in the log, when it has one. */
   title?: string
@@ -20,6 +24,8 @@ export interface UsageRow {
   state: 'importing' | 'ready' | 'unknown'
   /** First structural disagreement found while reading the file; still listed. */
   problem?: string
+  detailsPending?: boolean
+  titlePending?: boolean
 }
 
 /** Root-wide totals plus the pragmas the backend applied. */
@@ -45,6 +51,12 @@ export interface Overview {
   rootPrivate?: boolean
   /** Largest first, which is the order the table ranks them in. */
   usage: UsageRow[]
+  usageTotal?: number
+  childSessions?: number
+  usageOffset?: number
+  usageLimit?: number
+  backends?: { sqliteSessions: number; jsonlSessions: number; sqliteBytes: number; jsonlBytes: number }
+  eventsPending?: boolean
 }
 
 /** One metric bucket: five seconds of real samples. */
@@ -130,6 +142,7 @@ export interface MigrationJob {
   finishedAt?: number
   report?: MigrationReport
   error?: string
+  notice?: string
 }
 
 /** The migration list response. `available` is false on a single-backend profile. */
@@ -143,6 +156,9 @@ export interface MigrationsAnswer {
 /** One conversation as a root listing shows it. */
 export interface SourceSession {
   id: string
+  origin?: 'subagent'
+  parentSession?: string
+  childCount?: number
   title?: string
   eventCount: number
   sizeBytes: number
@@ -154,6 +170,9 @@ export interface SourceSession {
   problem?: string
   /** True when the other backend already holds this conversation. */
   inTarget?: boolean
+  detailsPending?: boolean
+  titlePending?: boolean
+  removed?: boolean
 }
 
 /** A page of one root, as `/source` answers it. */

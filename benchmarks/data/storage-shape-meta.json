@@ -1,0 +1,12 @@
+{
+  "events": 20000,
+  "rounds": 5,
+  "frame_events": 64,
+  "chunk_budget": 524288,
+  "zstd_level": 3,
+  "python": "3.12.10",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "sqlite": "3.49.1",
+  "zstandard": "0.25.0",
+  "note": "synthetic session, Python bindings, storage shapes only; not the plugin's JavaScript measurement"
+}
