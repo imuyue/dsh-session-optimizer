@@ -1,7 +1,5 @@
 <h1 align="center"><img src="icon.svg" width="40" height="40" alt="icon" valign="middle"> dsh-session-optimizer</h1>
 
----
-
 <p align="center"><b>让每一次对话都保持流畅。</b></p>
 
 <p align="center">DeepSeek Harness 的 SQLite 会话存储：翻页更快、占用更小、可回退迁移。</p>
