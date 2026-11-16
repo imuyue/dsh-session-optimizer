@@ -127,7 +127,7 @@ python benchmarks/storage_shape_benchmark.py
 
 | item    | value                                     |
 | ------- | ----------------------------------------- |
-| DSH     | `>=0.2.2-rc.1 <0.3.0`, contract version 4 |
+| DSH     | `>=0.2.2-rc.1`, contract version 4        |
 | Node.js | `>=24.9.0`                                |
 | formats | reads store layout v1 and v2, writes v2   |
 
