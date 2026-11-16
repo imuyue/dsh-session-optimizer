@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fileSizeText } from '@deepseek-ai/dsh-client-ui-primitives'
-import { fetchOverview, fetchSettings, saveSettings } from './api.ts'
+import { checkForUpdate, fetchOverview, fetchSettings, saveSettings } from './api.ts'
 import type { Overview, Preferences, SettingsAnswer } from './types.ts'
 import { type Text, localeOf, textOf } from './i18n.ts'
 import { onLibraryChanged } from './library.ts'
@@ -398,11 +398,9 @@ export function ConsolePage() {
                   text={text}
                   answer={settings}
                   onPatch={applyPatch}
-                  // A failed re-read rejects, so the panel can report it instead
-                  // of printing "up to date" over a request that never landed.
-                  onRefresh={async () => {
-                    setSettings(await fetchSettings())
-                  }}
+                  // A rejected check leaves the panel with a message instead of a
+                  // status line it never earned.
+                  onCheckUpdate={checkForUpdate}
                 />
               )
               : null}

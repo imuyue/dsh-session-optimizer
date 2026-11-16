@@ -27,6 +27,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { overlappingDirectories } from './path-identity.ts'
 import type { WorkspaceMembershipSnapshot } from './migration-workspace.ts'
 import type { PluginAbout } from './about.ts'
+import { checkForUpdate } from './update.ts'
 import type { SqliteSettings } from './database.ts'
 import { discoverRoots } from './discover.ts'
 import type { InspectTarget } from './inspect.ts'
@@ -477,6 +478,21 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
       // refused the write" is the one fact that makes the failure actionable.
       return failure(`cannot write the preferences file: ${String(error)}`, 500)
     }
+  })
+
+  // Whether a newer release exists on npm. Deliberately *not* part of the
+  // `/settings` answer: that route runs on every panel open, while this one
+  // reaches the network, so folding it in would put the registry's latency in
+  // front of the panel's first paint and ask it again on every visit.
+  //
+  // The version compared is the one on disk, the same one the panel prints — not
+  // the loaded one — so "up to date" stays consistent with the row above it.
+  register('/update', ['GET'], async () => {
+    const about = aboutOf()
+    if (about === undefined) {
+      return failure('this mount reports no plugin version, so there is nothing to compare', 409)
+    }
+    return json(await checkForUpdate(about.pluginVersion))
   })
 
   // What the plugin has been complaining about. In memory only: a warning about

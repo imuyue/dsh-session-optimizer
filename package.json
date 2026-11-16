@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-optimizer",
-  "version": "0.1.0",
+  "version": "0.1.29",
   "description": "SQLite session backend for DSH: one database per conversation, with window reads, zstd chunking, migration and an inspection console.",
   "license": "MIT",
   "type": "module",
@@ -43,6 +43,7 @@
   ],
   "files": [
     "lib",
+    "docs",
     "cordis.patch.yml",
     "README.md",
     "README.en.md",
@@ -64,7 +65,7 @@
   },
   "engines": {
     "node": ">=24.9.0",
-    "dsh": ">=0.2.2-rc.1 <0.3.0"
+    "dsh": ">=0.2.2-rc.1 <0.3.0-0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/build-client.mjs",
@@ -76,11 +77,11 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.1.0",
-    "@deepseek-ai/dsh-session": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-session-persistence": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-session-query": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-app-boot": "0.2.2-rc.1",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-session": ">=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-session-persistence": ">=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-session-query": ">=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-app-boot": ">=0.2.2-rc.1 <0.3.0-0",
+    "@deepseek-ai/dsh-session-persistence-jsonl": ">=0.2.2-rc.1 <0.3.0-0",
     "@deepseek-ai/node-addon-system": "0.1.2",
     "@deepseek-ai/schemastery": "^3.19.0"
   },

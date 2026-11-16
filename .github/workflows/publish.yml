@@ -1,0 +1,35 @@
+name: publish
+
+# Trusted publishing: npm trusts a short-lived OIDC identity issued to this
+# workflow instead of a long-lived token, so no secret is stored anywhere and
+# no one-time password is involved. `npm publish --provenance` then attaches a
+# signed attestation linking the tarball to this commit and this workflow.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # No registry-url here on purpose: setup-node would write an .npmrc that
+      # makes npm look for a token, and there is none by design.
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm run typecheck
+      - run: npm run build
+
+      - name: Publish
+        run: npm publish --provenance --access public --registry=https://registry.npmjs.org

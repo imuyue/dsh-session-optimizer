@@ -90,11 +90,11 @@ it('gates sub-options by the master switch and sends the selected patch', () => 
 it('places stability inside optional optimizations, restores format descriptions, and validates language changes', async () => {
   const onPatch = vi.fn(async () => undefined)
   const text = textOf('zh')
-  const unavailable = SettingsTab({ text, answer: undefined, onPatch, onRefresh: async () => undefined })
+  const unavailable = SettingsTab({ text, answer: undefined, onPatch, onCheckUpdate: async () => ({ state: 'up-to-date' as const, current: '0.1.27', latest: '0.1.27' }) })
   const unloaded = nodes(unavailable)
   expect(unloaded.some(n => n.type === 'button' && words(n) === text.settings.performance.restore)).toBe(true)
   expect(unloaded.find(n => n.type === 'select')!.props.disabled).toBe(true)
-  const tree = SettingsTab({ text, answer: { preferences: { language: 'zh', stabilityFixes: true, format: 'sqlite' }, formats: ['sqlite', 'jsonl'] }, onPatch, onRefresh: async () => undefined })
+  const tree = SettingsTab({ text, answer: { preferences: { language: 'zh', stabilityFixes: true, format: 'sqlite' }, formats: ['sqlite', 'jsonl'] }, onPatch, onCheckUpdate: async () => ({ state: 'up-to-date' as const, current: '0.1.27', latest: '0.1.27' }) })
   const all = nodes(tree)
   expect(all.filter(n => n.type === 'h2').map(words).slice(0, 2)).toEqual([text.settings.storage, text.settings.performance.title])
   const optional = all.find(n => n.type === 'section' && n.props['aria-label'] === text.settings.performance.title)!

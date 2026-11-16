@@ -19,6 +19,7 @@ import type {
   SettingsAnswer,
   SourceListing,
   UninstallReport,
+  UpdateCheck,
 } from './types.ts'
 
 import { consoleFetch } from './host-fetch.ts'
@@ -162,6 +163,17 @@ export async function fetchSettings(signal?: AbortSignal): Promise<SettingsAnswe
 /** Write one patch of the switches; the Host answers with the result in force. */
 export function saveSettings(patch: Partial<Preferences>): Promise<Preferences> {
   return post<Preferences>('settings', patch)
+}
+
+/**
+ * Ask the Host whether a newer release exists on npm.
+ *
+ * No `signal`: the request outlives the render that started it by design — the
+ * Host has already spent the registry round-trip, and aborting on unmount would
+ * only throw that away. The Host's own timeout bounds it instead.
+ */
+export function checkForUpdate(): Promise<UpdateCheck> {
+  return read<UpdateCheck>('update')
 }
 
 /** What the plugin has complained about since it started. */

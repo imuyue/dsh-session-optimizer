@@ -11,46 +11,44 @@
  * what the backend will do on the very next append. The row is disabled while the
  * write is in flight, which is what keeps two clicks from racing.
  *
+ * The update row is the one place that reports on something outside this machine,
+ * so it prints all four answers the Host can give: current, outdated (with the
+ * page and the command), not published, and the reason a check could not be made.
+ *
  * @module dsh-session-optimizer/client/SettingsTab
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import type { Language, Text } from './i18n.ts'
-import type { PluginAbout, Preferences, SettingsAnswer } from './types.ts'
+import type { PluginAbout, Preferences, SettingsAnswer, UpdateCheck } from './types.ts'
 import { PerformanceSettings } from './PerformanceSettings.tsx'
-
-/** How long the update check spins; the design specifies a moment, not a wait. */
-const CHECK_DELAY_MS = 500
 
 export interface SettingsTabProps {
   readonly text: Text
   readonly answer: SettingsAnswer | undefined
   /** Write one patch; resolves to the preferences the Host now holds. */
   readonly onPatch: (patch: Partial<Preferences>) => Promise<void>
-  /** Re-read the route, which also re-reads the installed manifest. */
-  readonly onRefresh: () => Promise<void>
+  /** Ask the Host to compare the installed version with the registry. */
+  readonly onCheckUpdate: () => Promise<UpdateCheck>
 }
 
 function formatOf(value: string | undefined): 'sqlite' | 'jsonl' | undefined {
   return value === 'sqlite' || value === 'jsonl' ? value : undefined
 }
 
-export function SettingsTab({ text, answer, onPatch, onRefresh }: SettingsTabProps) {
+export function SettingsTab({ text, answer, onPatch, onCheckUpdate }: SettingsTabProps) {
   const preferences = answer?.preferences
   const formats = answer?.formats ?? []
   const [saving, setSaving] = useState(false)
   const [checking, setChecking] = useState(false)
-  const [checked, setChecked] = useState(false)
+  /** Absent before the first check: the row says nothing rather than guessing. */
+  const [result, setResult] = useState<UpdateCheck | undefined>(undefined)
   const [failure, setFailure] = useState<string | undefined>(undefined)
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   // A ref, not the `saving` state: two clicks in the same tick both read the state
   // as it was before the first render, and both would go out. The ref is set
   // before the first await, so the second click sees it.
   const busy = useRef(false)
-
-  useEffect(() => () => {
-    if (timer.current !== undefined) clearTimeout(timer.current)
-  }, [])
 
   const patch = useCallback(
     async (next: Partial<Preferences>): Promise<void> => {
@@ -70,34 +68,61 @@ export function SettingsTab({ text, answer, onPatch, onRefresh }: SettingsTabPro
     [onPatch],
   )
 
-  // The check asks the Host what version is installed now. There is no update
-  // feed to call, so the answer is "you are up to date" unless a newer build has
-  // landed on disk since this page booted — in which case the version line itself
-  // shows the new number, which is information rather than a sentence.
+  // The check asks the Host, which is the only side that can reach the registry.
+  // The previous answer is cleared first: leaving "up to date" on screen while a
+  // new check is in flight would make the old answer look like the new one.
   //
-  // A failed re-read says so instead: `checked` stays false, so the panel cannot
-  // print "up to date" about a request that never arrived (and `.finally` would
-  // leave the rejection unhandled).
+  // A throw here means the console route itself refused — not that the registry
+  // was unreachable, which the Host reports as a `state` instead. So the panel
+  // can always say which of the two happened.
   const check = useCallback((): void => {
     if (checking) return
     setChecking(true)
-    setChecked(false)
+    setResult(undefined)
     setFailure(undefined)
-    timer.current = setTimeout(() => {
-      onRefresh()
-        .then(() => { setChecked(true) })
-        .catch((error_: unknown) => {
-          setFailure(error_ instanceof Error ? error_.message : String(error_))
-        })
-        .finally(() => { setChecking(false) })
-    }, CHECK_DELAY_MS)
-  }, [checking, onRefresh])
+    void onCheckUpdate()
+      .then((next) => { setResult(next) })
+      .catch((error_: unknown) => {
+        setFailure(error_ instanceof Error ? error_.message : String(error_))
+      })
+      .finally(() => { setChecking(false) })
+  }, [checking, onCheckUpdate])
 
   const language: Language = preferences?.language ?? 'zh'
   const about: PluginAbout | undefined = answer?.about
   const active = formatOf(preferences?.format)
   const fixes = preferences?.stabilityFixes ?? true
   const note = failure
+
+  // The licence name is printed only when the manifest names one: a hard-coded
+  // "MIT" in a translation string would keep saying MIT after the licence changed.
+  const licenseName = about?.licenseId === undefined
+    ? text.settings.license
+    : text.settings.licenseLink(about.licenseId)
+
+  const updateStatus = (): ReactNode => {
+    if (result === undefined) return null
+    if (result.state === 'up-to-date') {
+      return <span className="dshsql-update-status">{text.settings.upToDate(result.current)}</span>
+    }
+    if (result.state === 'unpublished') {
+      return <span className="dshsql-update-status">{text.settings.updateUnpublished}</span>
+    }
+    if (result.state === 'unavailable') {
+      return <span className="dshsql-update-status">{text.settings.updateUnavailable(result.detail)}</span>
+    }
+    // Outdated: the page for the release, and the command that takes it. Both are
+    // answers, not an instruction — the panel does not install anything itself.
+    return (
+      <div className="dshsql-update-available">
+        <span className="dshsql-update-status">{text.settings.updateAvailable(result.latest, result.current)}</span>
+        <a className="dshsql-link-button" href={result.page} target="_blank" rel="noreferrer">
+          {text.settings.updatePage}
+        </a>
+        <code className="dshsql-mono dshsql-update-command">{text.settings.updateInstall(result.install)}</code>
+      </div>
+    )
+  }
 
   return (
     <div className="dshsql-settings">
@@ -188,7 +213,7 @@ export function SettingsTab({ text, answer, onPatch, onRefresh }: SettingsTabPro
               >
                 {checking ? text.settings.checking : text.settings.checkUpdate}
               </button>
-              {checked ? <span className="dshsql-update-status">{text.settings.upToDate}</span> : null}
+              {updateStatus()}
             </dd>
           </div>
           <div className="dshsql-kv-row">
@@ -220,10 +245,10 @@ export function SettingsTab({ text, answer, onPatch, onRefresh }: SettingsTabPro
                 </a>
               )}
               {about?.links.license === undefined ? (
-                <span>{text.settings.license}</span>
+                <span>{licenseName}</span>
               ) : (
                 <a className="dshsql-link-button" href={about.links.license} target="_blank" rel="noreferrer">
-                  {text.settings.license}
+                  {licenseName}
                 </a>
               )}
             </dd>

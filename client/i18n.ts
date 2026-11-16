@@ -185,13 +185,22 @@ export interface Text {
     readonly version: string
     readonly checkUpdate: string
     readonly checking: string
-    readonly upToDate: string
+    /** Takes the version it compared, so "up to date" names what it is up to date with. */
+    readonly upToDate: (version: string) => string
+    /** The newer version, and the one running — the view prints both. */
+    readonly updateAvailable: (latest: string, current: string) => string
+    readonly updateInstall: (command: string) => string
+    readonly updateUnpublished: string
+    readonly updateUnavailable: (detail: string) => string
+    readonly updatePage: string
     readonly build: string
     readonly repository: string
     readonly openRepository: string
     readonly support: string
     readonly feedback: string
+    /** Plain text, no arrow: used when the manifest names no license page. */
     readonly license: string
+    readonly licenseLink: (identifier: string) => string
     readonly reading: string
   }
   readonly diagnostics: {
@@ -367,13 +376,19 @@ const ZH: Text = {
     version: '当前插件版本',
     checkUpdate: '检查更新',
     checking: '检查中…',
-    upToDate: '已是最新版本',
+    upToDate: version => `已是最新版本 · v${version}`,
+    updateAvailable: (latest, current) => `发现新版本 v${latest}（当前 v${current}）`,
+    updateInstall: command => `安装：${command}`,
+    updateUnpublished: '这个版本还没有发布到 npm',
+    updateUnavailable: detail => `暂时无法检查更新：${detail}`,
+    updatePage: '查看发布页 ↗',
     build: '构建信息',
     repository: 'GitHub 仓库',
     openRepository: '打开仓库 ↗',
     support: '支持与许可',
     feedback: '反馈 ↗',
-    license: '许可证 · MIT ↗',
+    license: '许可证',
+    licenseLink: identifier => `许可证 · ${identifier} ↗`,
     reading: '正在读取设置…',
   },
   diagnostics: {
@@ -549,13 +564,19 @@ const EN: Text = {
     version: 'Plugin version',
     checkUpdate: 'Check for updates',
     checking: 'Checking…',
-    upToDate: "You're up to date",
+    upToDate: version => `You're up to date · v${version}`,
+    updateAvailable: (latest, current) => `v${latest} is available (you run v${current})`,
+    updateInstall: command => `Install: ${command}`,
+    updateUnpublished: 'This version is not on npm yet',
+    updateUnavailable: detail => `Cannot check for updates: ${detail}`,
+    updatePage: 'View release ↗',
     build: 'Build information',
     repository: 'GitHub repository',
     openRepository: 'Open repository ↗',
     support: 'Support and license',
     feedback: 'Feedback ↗',
-    license: 'License · MIT ↗',
+    license: 'License',
+    licenseLink: identifier => `License · ${identifier} ↗`,
     reading: 'Reading settings…',
   },
   diagnostics: {

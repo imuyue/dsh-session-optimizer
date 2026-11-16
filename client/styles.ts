@@ -345,6 +345,8 @@ const CSS = `
 }
 .dshsql-link-button:hover { text-decoration: underline; }
 .dshsql-update-status { color: var(--dshsql-muted); font-size: var(--dshsql-small); }
+.dshsql-update-available { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; flex-basis: 100%; }
+.dshsql-update-command { color: var(--dshsql-muted); font-size: var(--dshsql-small); user-select: all; }
 .dshsql-note {
   margin: 0 0 16px; padding: 8px 10px;
   border: 1px solid var(--dshsql-border); border-left-width: 3px; border-radius: var(--dshsql-radius);

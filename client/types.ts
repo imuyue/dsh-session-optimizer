@@ -210,6 +210,8 @@ export interface PluginAbout {
   pluginVersion: string
   /** Version of `@deepseek-ai/dsh-session` this install resolved against. */
   dshVersion?: string
+  /** The SPDX identifier the manifest declares, when it declares one. */
+  licenseId?: string
   /** Only the links the manifest actually declares; the rest are absent. */
   links: {
     repository?: string
@@ -217,6 +219,19 @@ export interface PluginAbout {
     license?: string
   }
 }
+
+/**
+ * What `/update` answers, mirroring `UpdateCheck` in `src/update.ts`.
+ *
+ * Every variant carries `current` so the view can print the version it compared
+ * even when the comparison never happened — a failure that hides what it was
+ * comparing reads as a bug in the row above it.
+ */
+export type UpdateCheck =
+  | { state: 'up-to-date'; current: string; latest: string }
+  | { state: 'outdated'; current: string; latest: string; page: string; install: string }
+  | { state: 'unpublished'; current: string }
+  | { state: 'unavailable'; current: string; detail: string }
 
 /**
  * The settings response. `formats` is what this install can serve, so a card for

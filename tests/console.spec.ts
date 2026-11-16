@@ -284,7 +284,7 @@ describe('console routes', () => {
     // The session list and the event reader are gone; their routes went with
     // them, so an unread endpoint cannot rot here.
     expect([...routes.keys()].sort()).toEqual(
-      [OVERVIEW, METRICS, SEARCH, MIGRATIONS, '/api/session-optimizer/migrations/clear', MIGRATE, ROOTS, SOURCE, SETTINGS_ROUTE, DIAGNOSTICS, DIAGNOSTICS_CLEAR, UNINSTALL_CHECK, '/api/session-optimizer/performance', '/api/session-optimizer/performance/client-report', '/api/session-optimizer/performance/disable', '/api/session-optimizer/history-preview'].sort(),
+      [OVERVIEW, METRICS, SEARCH, MIGRATIONS, '/api/session-optimizer/migrations/clear', MIGRATE, ROOTS, SOURCE, SETTINGS_ROUTE, DIAGNOSTICS, DIAGNOSTICS_CLEAR, UNINSTALL_CHECK, '/api/session-optimizer/titles', '/api/session-optimizer/workspace-memberships', '/api/session-optimizer/update', '/api/session-optimizer/performance', '/api/session-optimizer/performance/client-report', '/api/session-optimizer/performance/disable', '/api/session-optimizer/history-preview'].sort(),
     )
     for (const [path, route] of routes) {
       expect(route.requestBody).toBe('buffered')
