@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-optimizer",
-  "version": "0.1.29",
+  "version": "0.1.30",
   "description": "SQLite session backend for DSH: one database per conversation, with window reads, zstd chunking, migration and an inspection console.",
   "license": "MIT",
   "type": "module",
