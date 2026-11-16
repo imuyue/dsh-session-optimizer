@@ -5,7 +5,7 @@
 <p align="center">A SQLite session store for DeepSeek Harness: faster pages, smaller files, reversible migration.</p>
 
 <p align="center">
-  <a href="https://github.com/imuyue/dsh-session-optimizer/releases"><img src="https://img.shields.io/badge/release-v0.1.0-2563eb.svg" alt="release"></a>
+  <a href="https://github.com/imuyue/dsh-session-optimizer/releases"><img src="https://img.shields.io/github/v/tag/imuyue/dsh-session-optimizer?label=release&color=2563eb" alt="release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="license"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/node-%3E%3D24.9-3c873a.svg" alt="node"></a>
   <a href="package.json"><img src="https://img.shields.io/badge/dsh-0.2.2--rc.1-4b5563.svg" alt="dsh"></a>
