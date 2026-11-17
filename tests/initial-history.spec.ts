@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { patchController, ORIGINAL_SHA256, sha256 } from '../scripts/patch-initial-history.mjs'
+import { patchController, ORIGINAL_SHA256, SUPPORTED, sha256 } from '../scripts/patch-initial-history.mjs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createInitialHistoryRemote, INITIAL_HISTORY_FACTORY, installInitialHistoryFactory, type InitialHistoryPolicy } from '../client/initial-history.ts'
 
@@ -218,7 +218,8 @@ describe('prepared exact-controller patch', () => {
   const installed = process.env.DSH_INITIAL_HISTORY_FIXTURE ?? join(process.env.LOCALAPPDATA ?? '', 'Programs', 'DeepSeek Harness', 'resources', 'app', 'dsh', 'node_modules', '@deepseek-ai', 'dsh-api-session-controller', 'lib', 'client.js')
   it.skipIf(!existsSync(installed))('round-trips a supported installed-source copy and refuses edits after patching', () => {
     const source = readFileSync(installed)
-    expect(sha256(source)).toBe(ORIGINAL_SHA256)
+    const build = SUPPORTED.find(entry => entry.sha256 === sha256(source))
+    expect(build, 'the installed controller must be one of the supported builds').toBeDefined()
     const dir = mkdtempSync(join(tmpdir(), 'dsh-initial-history-golden-'))
     try {
       const file = join(dir, 'client.js'); writeFileSync(file, source)
