@@ -15,7 +15,14 @@ permissions:
   id-token: write
 
 jobs:
+  # A tag is not evidence that the tree works. Nothing in this repository ran the
+  # suite until this gate existed, which is how 0.1.30 was published from a tree
+  # that failed on the maintainer's own machine.
+  gate:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

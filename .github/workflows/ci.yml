@@ -4,30 +4,47 @@ name: ci
 # session directories, and those are exactly the places where Linux and Windows
 # disagree: a Windows-only failure is invisible on `ubuntu-latest`, which is how
 # a release once shipped with a red suite.
+#
+# Two Node lines on purpose as well. `engines` allows anything from 24.9, and the
+# two ends of that range behave differently: 26 dropped
+# `--experimental-transform-types` (which the storage worker used to pass) and
+# changed `node:sqlite` into raising `RangeError` on a `last_insert_rowid` above
+# 2^53 (which a delete against a contentless FTS5 index produces). Both were
+# found only after a release, because no runner had ever used a Node the plugin
+# had not been developed against.
 on:
   push:
     branches:
       - main
   pull_request:
   workflow_dispatch:
+  # `publish` calls this workflow, so a tag can never ship a tree that fails.
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
   test:
+    name: node ${{ matrix.node }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        node: ['24', '26']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node }}
 
+      # npm 12 refuses tarballs whose URL points at a host other than the
+      # configured registry (EALLOWREMOTE). The lockfile pins registry.npmjs.org
+      # and `.npmrc` rewrites that host to whatever registry is in use, so the
+      # default setup is enough — no `allow-remote` override here, because a fresh
+      # checkout has to install under the same defaults a user gets.
       - run: npm ci --no-audit --no-fund
 
       - run: npm run typecheck
