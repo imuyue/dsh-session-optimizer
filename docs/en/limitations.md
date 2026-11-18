@@ -10,6 +10,7 @@ Known edges, stated plainly. None of them is a surprise on the right workload, b
 ## Cost model
 
 * **A full read is not faster.** Reading every event touches the same payload the JSONL file holds, so the only saving is the redundant columns and the WAL replay (~10% in the reference measurement). The backend wins on *narrow* reads: header, page, tail, random window.
+* **In absolute terms a full read grows with the conversation.** The reference conversation (47,374 events) is 669ms; a 56,537-event conversation stored in 84 MB took 1377ms with a 312MB peak heap — about 1.0s of it decompressing 223MB of JSON and about 0.3s parsing it line by line. SQL, indexes and seal folding are not the bottleneck. Chunking keeps window reads independent of file size, but a full read still pays for the whole payload.
 * **Creating a session is slower.** A database is materialised on first write (~31 ms in the reference measurement) versus opening a file (<1 ms). Creating hundreds of short-lived conversations is cheaper on the JSONL side.
 
 ## Memory
@@ -48,6 +49,7 @@ Known edges, stated plainly. None of them is a surprise on the right workload, b
 ## Platform
 
 * Windows has no `flock`, so the lease is a lock file plus a liveness check; a lock left by a killed process is reclaimed once that process is gone.
+* **On Windows, while this process holds a connection — even `readOnly: true` — the database and its `-wal`/`-shm` cannot be renamed or deleted.** The system answers `EBUSY` (`EPERM` for a directory), and retrying cannot help because the handle is ours. Conversion, repair and "delete a session directory from outside" all call `releaseStore()` to drop the cached connection before touching files; going around it and calling `rm`/`rename` directly fails. This is not specific to this plugin: [SQLite itself](https://sqlite.org/forum/forumpost/0fb1970c064b4ea7?t=h) states it is never safe to rename a database file that is in use.
 * Directory and file modes (`0700`/`0600`) are enforced with POSIX semantics. On Windows they are best-effort and depend on the filesystem ACLs.
 * The plugin targets DSH `>=0.2.2-rc.1` and Node `>=24.9.0`. The database records `dsh_contract_version = 4`; a different contract is refused on open.
 

@@ -53,6 +53,8 @@ Two entries deserve a note. `open header` on the JSONL side costs 791 ms because
 
 A full read is the operation where a database wins least: the payload is the same bytes, so the only saving is skipping the WAL replay and the redundant columns. Everything above cheaply beats it, because those paths never touch the whole file.
 
+A larger real conversation (56,537 events, 84 MB stored compressed, ~3.9 KB of JSON per event) puts the same operation at **24.4 µs per event**: 1377ms end to end with a 312MB peak heap, against 14.1 µs per event for the reference conversation. Absolute milliseconds therefore do not compare across conversations — compare **cost per event** and **throughput in MB/s**. The per-event cost falls as events get smaller and the conversation gets larger, while the total always grows linearly with bytes.
+
 ### Space
 
 ![storage size](../images/storage-size.en.png)

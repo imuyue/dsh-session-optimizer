@@ -48,6 +48,12 @@ When touching the write path, the handshake to respect is:
 * a torn tail must never be served;
 * `revision` changes with content only, never with time or process.
 
+### CI and both platforms
+
+`.github/workflows/ci.yml` runs `typecheck`, `build` and `npm test` on `ubuntu-latest` **and** `windows-latest`. Both are needed: file leases, atomic renames and session directories are exactly where Linux and Windows disagree, so a Linux-only run hides every Windows-specific failure — which is how a release once shipped with 40 failing tests.
+
+Keep the Windows constraint in mind when touching file paths: **while this process holds a connection — even `readOnly: true` — the store and its `-wal`/`-shm` cannot be renamed or deleted.** The system answers `EBUSY` (`EPERM` for a directory) and a retry cannot help, because the handle is ours. Every rename, delete or archive path asks `releaseStore()` (`src/store-lease.ts`) first — executors register a releaser at construction, and worker mode forwards that call to the worker thread. In tests, if the seeding context still caches the connection, `await releaseStore(path)` before touching the file.
+
 ## Regenerating the charts
 
 ```bash

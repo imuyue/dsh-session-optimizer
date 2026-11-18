@@ -48,6 +48,12 @@ npx vitest run tests/database.spec.ts
 * 撕裂尾绝不能被读出；
 * `revision` 只随内容变化，不随时间或进程变化。
 
+### CI 与两个平台
+
+`.github/workflows/ci.yml` 在 `ubuntu-latest` 与 `windows-latest` 上都跑 `typecheck`、`build` 与 `npm test`。两个平台都要跑是有原因的：文件租约、原子改名与会话目录正是 Linux 与 Windows 分歧最大的地方，只在 Linux 上跑会让 Windows 专属的失败完全不可见——一个带 40 条失败用例的版本就是这样发出去的。
+
+改动文件路径时记住 Windows 的约束：**本进程持有连接（哪怕 `readOnly: true`）时，该库及其 `-wal`/`-shm` 无法改名或删除**，系统回 `EBUSY`（目录是 `EPERM`），重试无效，因为句柄是自己的。任何改名/删除/归档案路径都要先经 `releaseStore()`（`src/store-lease.ts`）——执行器在启动时注册释放器，worker 模式会把它转发到工作线程。测试里如果播种用的 `ctx` 仍缓存着连接，同样要先 `await releaseStore(path)` 再动文件。
+
 ## 重新生成图表
 
 ```bash

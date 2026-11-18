@@ -1,0 +1,35 @@
+name: ci
+
+# Both platforms on purpose. The suite exercises file leases, atomic renames and
+# session directories, and those are exactly the places where Linux and Windows
+# disagree: a Windows-only failure is invisible on `ubuntu-latest`, which is how
+# a release once shipped with a red suite.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
