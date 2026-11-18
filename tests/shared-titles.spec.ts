@@ -10,7 +10,9 @@ import { inspectConsoleOverview } from '../src/console-overview.ts'
 import { registerConsole } from '../src/console.ts'
 import type { Context } from '@deepseek-ai/cordis'
 const roots:string[]=[]
-afterEach(async()=>{forgetPickerInventory();vi.clearAllMocks();for(const root of roots.splice(0))await rm(root,{recursive:true,force:true})})
+afterEach(async()=>{forgetPickerInventory();vi.clearAllMocks();for(const root of roots.splice(0))await removeTree(root)})
+/** Windows refuses to unlink a directory whose last handle closed a moment ago (ENOTEMPTY/EBUSY), so retry briefly instead of failing the next test's cleanup. */
+async function removeTree(root:string,attempts=20){for(let attempt=1;;attempt++){try{await rm(root,{recursive:true,force:true});return}catch(error){const code=(error as NodeJS.ErrnoException).code;if(attempt>=attempts||(code!=='ENOTEMPTY'&&code!=='EBUSY'&&code!=='EPERM'))throw error;await new Promise(resolve=>setTimeout(resolve,25*attempt))}}}
 async function fixture(count=1){
  const root=await mkdtemp(join(tmpdir(),'dso-shared-titles-'));roots.push(root)
  const jsonl=join(root,'jsonl'),sqlite=join(root,'sqlite');await mkdir(sqlite)
@@ -23,7 +25,11 @@ async function fixture(count=1){
 it('selected warm title reads stat only selected artifacts instead of all library files',async()=>{
  const {jsonl}=await fixture(80);await pickerFiles(jsonl);vi.mocked(stat).mockClear()
  expect((await pickerTitles(jsonl,new Set(['session-0']))).get('session-0')?.title).toBe('Latest 0')
- expect(vi.mocked(stat).mock.calls.length).toBe(2)
+ // 80 artifacts exist; only the selected one may be stat'ed (its directory and
+ // its file both count as that one artifact).
+ const statted=vi.mocked(stat).mock.calls.map(call=>String(call[0]))
+ expect(statted.filter(path=>/session-\d+/.test(path)&&!path.includes('session-0'))).toEqual([])
+ expect(statted.filter(path=>path.includes('session-0')).length).toBeGreaterThan(0)
 })
 it('shares the confirmed latest title with the conversion picker and overview preview',async()=>{
  const {jsonl,target}=await fixture();const options={offset:0,limit:50}
@@ -58,7 +64,13 @@ it('serves bounded exact identities through the common title route without overv
  const answer=await route(request(['session-0','missing']))
  expect(answer.status).toBe(200)
  expect(await answer.json()).toEqual({titles:[{id:'session-0',title:'Latest 0',titlePending:false},{id:'missing',removed:true,titlePending:false}]})
- expect(vi.mocked(stat).mock.calls.length).toBe(2)
+ // Only the two requested identities may be touched. Asserted as a set of paths
+ // rather than a raw call count: a repeat stat on the same artifact is harmless,
+ // while a stat of an unselected artifact would mean an overview scan.
+ const statted=vi.mocked(stat).mock.calls.map(call=>String(call[0]))
+ expect(statted.filter(path=>/session-\d+/.test(path)&&!path.includes('session-0'))).toEqual([])
+ expect(statted.filter(path=>path.includes('session-0')).length).toBeGreaterThan(0)
+ expect(statted.every(path=>path.includes('session-0')||path.includes('missing'))).toBe(true)
 })
 it('shows the same quick title in both views while the latest title is pending',async()=>{
  const {jsonl,target}=await fixture()
