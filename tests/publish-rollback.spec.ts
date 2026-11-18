@@ -52,7 +52,7 @@ async function fixture() {
     process.stdout.write(JSON.stringify(db.loadSession()?.events));
     process.kill(process.pid, 'SIGKILL');
   `
-  const child = spawnSync(process.execPath, ['--experimental-transform-types', '--input-type=module', '-e', childCode], { encoding: 'utf8', timeout: 10000 })
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', childCode], { encoding: 'utf8', timeout: 10000 })
   // Windows has no signals: `process.kill(pid, 'SIGKILL')` terminates the process
   // through `TerminateProcess`, so `signal` is null and only the status reports
   // the kill. The child's work is the point — it died after a committed append —

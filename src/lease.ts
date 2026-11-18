@@ -165,8 +165,11 @@ async function reclaimStaleMarker(path: string, id: SessionId): Promise<boolean>
  */
 export class SessionWriteLease {
   private released = false
+  private readonly held: HeldLock
 
-  private constructor(private readonly held: HeldLock) {}
+  private constructor(held: HeldLock) {
+    this.held = held
+  }
 
   /** Take the lease for `dir`, creating the directory when missing. */
   static async acquire(dir: string, id: SessionId): Promise<SessionWriteLease> {

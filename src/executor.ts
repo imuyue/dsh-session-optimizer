@@ -35,7 +35,7 @@ import {
   type SqliteSettings,
 } from './database.ts'
 import { findDatabasePath } from './storage.ts'
-import { registerStoreReleaser } from './store-lease.ts'
+import { registerStoreReleaser, retryWhileHeld, StoreBusyError, storeIsHeld } from './store-lease.ts'
 
 /**
  * One store's header as a listing sees it.
@@ -212,6 +212,8 @@ function sameStore(held: StoreIdentity | undefined, seen: StoreIdentity | undefi
  */
 class DatabaseCache {
   private readonly entries = new Map<string, CachedStore>()
+  private readonly capacity: number
+  private readonly frames: ByteLru<readonly string[]>
 
   /**
    * `capacity` is at least one: a cache of zero cannot hand a caller a live
@@ -220,13 +222,21 @@ class DatabaseCache {
    * directly constructed executor honest instead of failing on every call.
    */
   constructor(
-    private readonly capacity: number,
-    private readonly frames: ByteLru<readonly string[]>,
+    capacity: number,
+    frames: ByteLru<readonly string[]>,
   ) {
     this.capacity = Math.max(1, Math.trunc(capacity) || 1)
+    this.frames = frames
   }
 
   get(path: string, settings: SqliteSettings): SessionDatabase {
+    // A store an operation is moving or deleting must not be opened: the handle
+    // would be in the way of its own `rename`/`unlink` on Windows, and closing it
+    // a moment ago only to reopen it now is the race the hold exists to stop. The
+    // async entry points below wait out a hold instead of surfacing this, so a
+    // read that arrives during a transfer answers a moment later rather than
+    // failing.
+    if (storeIsHeld(path)) throw new StoreBusyError(path)
     const cached = this.entries.get(path)
     if (cached !== undefined) {
       if (sameStore(cached.identity, identityOf(path))) {
@@ -511,11 +521,11 @@ export class InlineExecutor implements StorageExecutor {
     settings: SqliteSettings,
     window?: { offset: number; length: number },
   ): Promise<LoadedSession | undefined> {
-    return this.cache.get(path, settings).loadSession(window)
+    return retryWhileHeld(path, () => this.cache.get(path, settings).loadSession(window))
   }
 
   async loadHeader(path: string, settings: SqliteSettings): Promise<LoadedHeader | undefined> {
-    return this.cache.get(path, settings).loadHeader()
+    return retryWhileHeld(path, () => this.cache.get(path, settings).loadHeader())
   }
 
   async loadSessionPaged(
@@ -523,7 +533,7 @@ export class InlineExecutor implements StorageExecutor {
     settings: SqliteSettings,
     signal?: AbortSignal,
   ): Promise<LoadedSession | undefined> {
-    const store = this.cache.get(path, settings)
+    const store = await retryWhileHeld(path, () => this.cache.get(path, settings))
     const meta = store.pagedHeader()
     if (meta === undefined || meta.eventCount < PAGED_MIN_EVENTS) return undefined
     return assemblePaged(
@@ -541,21 +551,21 @@ export class InlineExecutor implements StorageExecutor {
    * the pages have to be requested one message at a time so the parse of one
    * overlaps the read of the next, and only the caller can decide when to stop.
    */
-  pagedHeader(path: string, settings: SqliteSettings): LoadedHeader | undefined {
-    return this.cache.get(path, settings).pagedHeader()
+  async pagedHeader(path: string, settings: SqliteSettings): Promise<LoadedHeader | undefined> {
+    return retryWhileHeld(path, () => this.cache.get(path, settings).pagedHeader())
   }
 
   /** One page of raw JSON; the Host selects the wire before posting work. */
-  readPage(path: string, settings: SqliteSettings, from: number, to: number, format: PageTransferFormat = currentPageTransferFormat()): LogPage | undefined {
-    return this.cache.get(path, settings).readPageBytes(from, to, format)
+  async readPage(path: string, settings: SqliteSettings, from: number, to: number, format: PageTransferFormat = currentPageTransferFormat()): Promise<LogPage | undefined> {
+    return retryWhileHeld(path, () => this.cache.get(path, settings).readPageBytes(from, to, format))
   }
 
   async trustedLength(path: string, settings: SqliteSettings): Promise<number | undefined> {
-    return this.cache.get(path, settings).trustedLength()
+    return retryWhileHeld(path, () => this.cache.get(path, settings).trustedLength())
   }
 
   async storedEventCount(path: string, settings: SqliteSettings): Promise<number> {
-    return this.cache.get(path, settings).storedEventCount()
+    return retryWhileHeld(path, () => this.cache.get(path, settings).storedEventCount())
   }
 
   async listHeaders(paths: readonly string[], settings: SqliteSettings): Promise<HeaderBatchEntry[]> {

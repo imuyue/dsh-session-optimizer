@@ -30,7 +30,7 @@
  * @module dsh-session-optimizer/warmup
  */
 
-import { statSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 
 import type { SqliteSettings } from './database.ts'
 import type { StorageExecutor } from './executor.ts'
@@ -215,6 +215,14 @@ export async function warmRecentSessions(options: WarmupOptions): Promise<Warmup
   for (const entry of found.slice(0, sessions)) {
     if (stopped) break
     if (!(await yieldTurn())) break
+    // A store deleted between the scan and this moment stays deleted. Opening its
+    // path would initialize a fresh empty store there — a write-side open creates
+    // the file — and the operator's deleted conversation would reappear as an
+    // empty one, so the read is dropped instead.
+    if (!existsSync(entry.path)) {
+      failed += 1
+      continue
+    }
     try {
       const header = await options.executor.loadHeader(entry.path, options.settings)
       if (header === undefined) {

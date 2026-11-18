@@ -127,16 +127,28 @@ export class SqliteSessionHandle implements SessionHandle {
   private drainPaused = false
   private draining: Promise<void> | undefined
   private lease: SessionWriteLease | undefined
+  private readonly storage: SqliteHandleStorage
+  readonly id: SessionId
+  readonly header: SessionHeader
+  readonly access: SessionAccess
+  private readonly state: SqliteHandleState
+  private readonly batchDelayMs: number
 
   constructor(
-    private readonly storage: SqliteHandleStorage,
-    readonly id: SessionId,
-    readonly header: SessionHeader,
-    readonly access: SessionAccess,
-    private readonly state: SqliteHandleState,
-    private readonly batchDelayMs: number = DEFAULT_WRITE_BATCH_MAX_DELAY_MS,
+    storage: SqliteHandleStorage,
+    id: SessionId,
+    header: SessionHeader,
+    access: SessionAccess,
+    state: SqliteHandleState,
+    batchDelayMs: number = DEFAULT_WRITE_BATCH_MAX_DELAY_MS,
     lease?: SessionWriteLease,
   ) {
+    this.storage = storage
+    this.id = id
+    this.header = header
+    this.access = access
+    this.state = state
+    this.batchDelayMs = batchDelayMs
     this.observedLength = state.cursor
     // A write open already holds the cross-process lock; reusing it keeps the
     // handle from flocking the same file twice (which always reports contention
@@ -386,8 +398,11 @@ export class SqliteBackendTracker {
   private readonly writers = new Map<SessionId, SqliteSessionHandle | null>()
   private readonly pending = new Map<SessionId, PendingSession>()
   private counter = 0
+  readonly name: string
 
-  constructor(readonly name: string) {}
+  constructor(name: string) {
+    this.name = name
+  }
 
   hasPending(id: SessionId): boolean {
     return this.pending.has(id)

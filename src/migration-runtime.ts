@@ -11,7 +11,14 @@ interface Runtime {
   subagents?: { listDescendants(id: SessionId, signal?: AbortSignal): Promise<readonly { kind: string; id: SessionId; activity?: string }[]> }
 }
 export class MigrationSessionBusyError extends Error {
-  constructor(readonly sessionId: string, message = '对话正在运行、排队或等待输入，请等待结束后再转换。', readonly waitable = true) { super(message); this.name = 'MigrationSessionBusyError' }
+  readonly sessionId: string
+  readonly waitable: boolean
+  constructor(sessionId: string, message = '对话正在运行、排队或等待输入，请等待结束后再转换。', waitable = true) {
+    super(message)
+    this.name = 'MigrationSessionBusyError'
+    this.sessionId = sessionId
+    this.waitable = waitable
+  }
 }
 
 /** Borrow official factory handles; never dispose private fibers or remove file locks. */
@@ -21,7 +28,9 @@ export class MigrationRuntime {
   private active = true
   private readonly lifetime = new AbortController()
   private readonly restore: (() => void)[] = []
-  constructor(private readonly runtime: Runtime) {
+  private readonly runtime: Runtime
+  constructor(runtime: Runtime) {
+    this.runtime = runtime
     try { for (const name of ['createAgent', 'resume', 'resumeWith'] as const) {
       const target = runtime.agentLoop
       const descriptor = Object.getOwnPropertyDescriptor(target, name)

@@ -252,6 +252,35 @@ describe('searching a store that predates the index', () => {
     }
   })
 
+  it('survives repeated deletes from the contentless index', async () => {
+    // An FTS5 `contentless_delete` table leaves `last_insert_rowid()` at an
+    // internal value around 2^53 once a ranged delete has run on it.
+    // `StatementSync.run()` reads that value on every write, so Node 24/25
+    // answer with a bogus Number and Node 26 (`node:sqlite` on SQLite 3.54)
+    // throws `RangeError: Value is too large to be represented as a JavaScript
+    // number` — which turned `truncateTail`, and every write queued behind it on
+    // the same connection, into a hard failure there. Write statements ask for
+    // BigInts, so the rowid never has to fit a Number.
+    const root = await makeRoot()
+    await ensureSessionDirectory(root)
+    const path = databasePath(root, '/work/search', 'session-repeated-truncate')
+    const store = SessionDatabase.open(path, SETTINGS)
+    stores.push(store)
+    const events: SessionEvent[] = []
+    for (let index = 1; index <= 6; index += 1) {
+      events.push(...turn((index - 1) * 6, index, `第${String(index)}轮 排位赛后台面板`, `第${String(index)}轮 ENOSPC`))
+    }
+    store.appendImported(headerOf('session-repeated-truncate'), events, 0)
+    store.markReady()
+    store.ensureSearchIndex()
+
+    // Two truncations in a row: the second one is what used to raise.
+    expect(() => store.truncateTail(30)).not.toThrow()
+    expect(() => store.truncateTail(18)).not.toThrow()
+    // Three whole turns survive (18 events, 0..17), so three replies are indexed.
+    expect(store.searchHits(matchQueryFor('ENOSPC') ?? '', 10)?.map((hit) => hit.seq)).toEqual([3, 9, 15])
+  })
+
   it('still reports nothing when the store cannot be written at all', async () => {
     const store = await seededStore()
     const path = store.path

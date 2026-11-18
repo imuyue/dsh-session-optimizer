@@ -51,7 +51,13 @@ describe('store lease', () => {
 
     const ctx = new Context()
     cleanup.push(() => ctx.fiber.dispose())
-    await ctx.plugin(Plugin, { root: base, storageThread: 'inline', writeBatchMaxDelayMs: 60000 })
+    // `warmupSessions: 0` is what makes the premise of this test true: the
+    // background warm-up opens the newest stores on its own schedule, so with it
+    // running the fixture cannot promise that the executor is the only holder of
+    // a handle — and a reopen that lands between the release and the `rm` is
+    // exactly the `EBUSY` this suite is trying to pin down. The race itself is
+    // covered by the hold tests below, deterministically.
+    await ctx.plugin(Plugin, { root: base, storageThread: 'inline', writeBatchMaxDelayMs: 60000, warmupSessions: 0 })
     // Reading is what caches the handle; nothing in the fixture keeps it besides
     // the executor itself.
     await ctx.sessionPersistence.open('session-released' as SessionId, 'read')
@@ -72,7 +78,7 @@ describe('store lease', () => {
 
     const ctx = new Context()
     cleanup.push(() => ctx.fiber.dispose())
-    await ctx.plugin(Plugin, { root: base, storageThread: 'inline', writeBatchMaxDelayMs: 60000 })
+    await ctx.plugin(Plugin, { root: base, storageThread: 'inline', writeBatchMaxDelayMs: 60000, warmupSessions: 0 })
     await ctx.sessionPersistence.list()
 
     const parked = `${path}.parked`
@@ -98,5 +104,57 @@ describe('store lease', () => {
     } finally {
       unregister()
     }
+  })
+
+  it('holds a store shut, so the reopen a release invites cannot happen', async () => {
+    const registry = await import('../src/store-lease.ts')
+    const path = join(await root(), 'session.db')
+
+    expect(registry.storeIsHeld(path)).toBe(false)
+    const release = await registry.holdStore(path)
+    // The whole point: while the hold runs, a read is refused rather than
+    // quietly reopening the file the caller is about to rename.
+    expect(registry.storeIsHeld(path)).toBe(true)
+    await expect(
+      registry.retryWhileHeld(path, () => 'opened', 20, 2),
+    ).rejects.toBeInstanceOf(registry.StoreBusyError)
+
+    release()
+    expect(registry.storeIsHeld(path)).toBe(false)
+    await expect(registry.retryWhileHeld(path, () => 'opened', 20, 2)).resolves.toBe('opened')
+  })
+
+  it('releases the hold even when the operation throws, and only once', async () => {
+    const registry = await import('../src/store-lease.ts')
+    const path = join(await root(), 'session.db')
+
+    await expect(
+      registry.withStoreHeld(path, async () => { throw new Error('operation failed') }),
+    ).rejects.toThrow('operation failed')
+    expect(registry.storeIsHeld(path)).toBe(false)
+
+    // A second `release()` must not hand the store to a waiter that never held it.
+    const first = await registry.holdStore(path)
+    const second = await registry.holdStore(path)
+    first()
+    expect(registry.storeIsHeld(path)).toBe(true)
+    first()
+    expect(registry.storeIsHeld(path)).toBe(true)
+    second()
+    expect(registry.storeIsHeld(path)).toBe(false)
+  })
+
+  it('waits for the hold to lift instead of reopening the file being moved', async () => {
+    const registry = await import('../src/store-lease.ts')
+    const path = join(await root(), 'session.db')
+
+    let opened = 0
+    const release = await registry.holdStore(path)
+    const pending = registry.retryWhileHeld(path, () => { opened += 1; return 'opened' }, 1_000, 2)
+    // The hold lasts a moment, then lifts — a read that arrived during it answers
+    // afterwards rather than failing, because one rename is microseconds of work.
+    setTimeout(() => { release() }, 20)
+    await expect(pending).resolves.toBe('opened')
+    expect(opened).toBe(1)
   })
 })

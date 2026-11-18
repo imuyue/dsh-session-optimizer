@@ -30,6 +30,103 @@ export function registerStoreReleaser(releaser: StoreReleaser): () => void {
 }
 
 /**
+ * Refusal raised when a read would re-open a store that is being moved away.
+ *
+ * Closing the connection is not enough on its own: a background warm-up or a
+ * read already in flight re-opens the file the moment the release returns, and
+ * the `rename`/`unlink` that follows meets `EBUSY` again. The hold below closes
+ * that window by refusing the reopen for as long as the operation runs.
+ */
+export class StoreBusyError extends Error {
+  readonly path: string
+
+  constructor(path: string) {
+    super(`"${path}" is being moved or replaced, so it cannot be opened right now`)
+    this.name = 'StoreBusyError'
+    this.path = path
+  }
+}
+
+/** Paths held by an operation that needs their files closed. */
+const holds = new Map<string, number>()
+
+/** Whether `path` is held: a read must not open it while this is true. */
+export function storeIsHeld(path: string): boolean {
+  return holds.has(path)
+}
+
+/**
+ * Close every cached connection for `path` and keep it closed until the
+ * returned function runs.
+ *
+ * The hold is taken *before* the release, so a read that arrives while the
+ * releasers are still running already sees it and refuses; the caller can then
+ * rename or unlink without racing a reopen. Releasing is idempotent so a `throw`
+ * path cannot leak a hold that would keep the store unreadable forever.
+ */
+export async function holdStore(path: string): Promise<() => void> {
+  holds.set(path, (holds.get(path) ?? 0) + 1)
+  let done = false
+  const release = (): void => {
+    if (done) return
+    done = true
+    const remaining = (holds.get(path) ?? 1) - 1
+    if (remaining <= 0) holds.delete(path)
+    else holds.set(path, remaining)
+  }
+  try {
+    await releaseStore(path)
+  } catch (error) {
+    release()
+    throw error
+  }
+  return release
+}
+
+/** Run `operation` with `path` released and held shut. */
+export async function withStoreHeld<T>(path: string, operation: () => Promise<T>): Promise<T> {
+  const release = await holdStore(path)
+  try {
+    return await operation()
+  } finally {
+    release()
+  }
+}
+
+/** How long a read waits for a held store before giving up on it. */
+export const STORE_BUSY_BUDGET_MS = 5_000
+
+/** Sleep between two attempts at opening a held store. */
+export function sleep(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * Run `open` once `path` is no longer held, or throw `StoreBusyError`.
+ *
+ * A hold lasts for one rename or one unlink — microseconds of file work — so the
+ * wait is measured in milliseconds and a caller that arrives during one gets its
+ * answer instead of a spurious failure. The budget is there so a stuck operation
+ * cannot park a read for ever: past it the caller is told the store is busy, and
+ * a warm-up treats that as "leave it cold" like any other unreadable store.
+ */
+export async function retryWhileHeld<T>(
+  path: string,
+  open: () => T | Promise<T>,
+  budgetMs = STORE_BUSY_BUDGET_MS,
+  stepMs = 5,
+): Promise<T> {
+  const deadline = Date.now() + budgetMs
+  for (;;) {
+    if (!holds.has(path)) return await open()
+    if (Date.now() >= deadline) throw new StoreBusyError(path)
+    await sleep(stepMs)
+  }
+}
+
+/**
  * Make every registered executor let go of `path`.
  *
  * Failures are swallowed: a releaser that cannot close a connection (a worker
@@ -44,8 +141,13 @@ export async function releaseStore(path: string): Promise<void> {
     // operation it wanted the file free for.
     try {
       await releaser(path)
-    } catch {
-      // Deliberately ignored — see the note above.
+    } catch (error) {
+      // Deliberately ignored — see the note above. `EBUSY`-shaped failures are
+      // hard to attribute after the fact, so an operator who sets the variable
+      // gets the releaser and the error in the log instead of silence.
+      if (process.env.DSH_SESSION_OPTIMIZER_TRACE_LEASE !== undefined) {
+        console.error('[store-lease] releaser failed for', path, error)
+      }
     }
   }
 }

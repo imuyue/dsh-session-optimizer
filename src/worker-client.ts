@@ -55,12 +55,14 @@ function workerSource(): { url: URL; execArgv: string[] } {
     return { url: new URL('./worker-entry.js', import.meta.url), execArgv: [] }
   }
   // A worker loads its entry itself, outside vitest's transform pipeline, so
-  // node strips types in strip-only mode — which rejects the parameter
-  // properties this code base (like the official one) uses. Transform mode is
-  // the same TypeScript semantics the test runner applies, just in the worker.
+  // node strips the types of the entry's whole import graph. That used to need
+  // `--experimental-transform-types` for the parameter properties this code base
+  // wrote; those are plain field assignments now, so strip-only is enough and no
+  // flag is passed. Node 26 removed the flag outright, and a worker handed an
+  // unknown one dies in `spawn` with `invalid execArgv flags`.
   return {
     url: new URL('./worker-entry.ts', import.meta.url),
-    execArgv: ['--experimental-transform-types'],
+    execArgv: [],
   }
 }
 
@@ -75,8 +77,10 @@ export class WorkerExecutor implements StorageExecutor {
   private rid = 0
   private generation = 0
   private closed = false
+  private readonly preparedSessionCacheSize: number
 
-  constructor(private readonly preparedSessionCacheSize: number) {
+  constructor(preparedSessionCacheSize: number) {
+    this.preparedSessionCacheSize = preparedSessionCacheSize
     this.worker = this.spawn()
     this.unregister = registerStoreReleaser(async (path) => { await this.release(path) })
   }

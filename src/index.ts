@@ -226,13 +226,15 @@ export class SqliteSessionPersistence extends SessionPersistence {
    * stays undefined there and a saved preference is simply remembered.
    */
   private backendSwitch: ((format: SessionFormat) => void) | undefined
+  private readonly tracker: SqliteBackendTracker
 
   constructor(
     ctx: Context,
     config: Config,
-    private readonly tracker: SqliteBackendTracker,
+    tracker: SqliteBackendTracker,
   ) {
     super(ctx)
+    this.tracker = tracker
     this.root = resolve(config.root)
     this.settings = {
       journalMode: config.journalMode,

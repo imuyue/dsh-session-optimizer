@@ -25,8 +25,10 @@ interface PreviewJob {
   settle(answer: PreviewAnswer): void
 }
 function workerSource(): { url: URL; execArgv: string[] } {
+  // See `workerSource` in worker-client.ts: the entry graph is strip-only clean,
+  // and Node 26 rejects the transform-types flag instead of ignoring it.
   return import.meta.url.endsWith('.ts')
-    ? { url: new URL('./preview-worker.ts', import.meta.url), execArgv: ['--experimental-transform-types'] }
+    ? { url: new URL('./preview-worker.ts', import.meta.url), execArgv: [] }
     : { url: new URL('./preview-worker.js', import.meta.url), execArgv: [] }
 }
 function validAnswer(value: unknown, sessionId: string): value is PreviewAnswer {
@@ -52,13 +54,19 @@ export class PreviewReader implements Disposable {
   private active: PreviewJob | undefined
   private disposed = false
   private terminating: Promise<unknown> | undefined
+  private readonly root: string
+  private readonly settings: SqliteSettings
+  private readonly timeoutMs: number
 
   constructor(
-    private readonly root: string,
-    private readonly settings: SqliteSettings,
-    private readonly timeoutMs = 1500,
+    root: string,
+    settings: SqliteSettings,
+    timeoutMs = 1500,
   ) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 1500) throw new RangeError('preview timeout must be between 1 and 1500ms')
+    this.root = root
+    this.settings = settings
+    this.timeoutMs = timeoutMs
   }
 
   read(sessionId: string, signal?: AbortSignal): Promise<PreviewAnswer> {

@@ -20,8 +20,11 @@
 export class ByteLru<V> {
   private readonly entries = new Map<string, { value: V; bytes: number }>()
   private used = 0
+  private readonly budget: number
 
-  constructor(private readonly budget: number) {}
+  constructor(budget: number) {
+    this.budget = budget
+  }
 
   /** The value for `key`, marking it as most recently used. */
   get(key: string): V | undefined {

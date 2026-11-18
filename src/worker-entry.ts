@@ -87,9 +87,9 @@ const handlers: Record<string, Handler> = {
    * caller parses it while the next page is being read here.
    */
   pagedHeader: (path: string, settings: SqliteSettings) =>
-    Promise.resolve(executor.pagedHeader(path, settings)),
+    executor.pagedHeader(path, settings),
   readPage: (path: string, settings: SqliteSettings, from: number, to: number, format: PageTransferFormat = 'bytes') =>
-    Promise.resolve(executor.readPage(path, settings, from, to, format)),
+    executor.readPage(path, settings, from, to, format),
   close: () => executor.close(),
 }
 

@@ -251,6 +251,38 @@ function readPragma(db: DatabaseSync, name: string): number {
   return typeof value === 'number' ? value : Number(value ?? 0)
 }
 
+/** Leading keyword of a statement, upper-cased, ignoring comments and whitespace. */
+function statementVerb(sql: string): string {
+  const stripped = sql
+    .replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/)*\s*/, '')
+    .match(/^[A-Za-z]+/)
+  return stripped?.[0].toUpperCase() ?? ''
+}
+
+const WRITE_VERBS = new Set(['INSERT', 'UPDATE', 'DELETE', 'REPLACE'])
+
+/**
+ * Keep `run()` from reading `last_insert_rowid()` as a JavaScript number.
+ *
+ * `StatementSync.run()` always fetches `sqlite3_last_insert_rowid()` and turns it
+ * into a Number. A `DELETE` on an FTS5 `contentless_delete` table leaves that
+ * value at an internal rowid around 2^53 (measured: 9007336693694464), so from
+ * the second such delete on a connection onwards:
+ *
+ * - Node 24 and 25 return the bogus value silently;
+ * - Node 26 (`node:sqlite` on SQLite 3.54) throws
+ *   `RangeError: Value is too large to be represented as a JavaScript number`.
+ *
+ * That turned `truncateTail` — and every write queued behind it on the same
+ * connection — into a hard failure there. No caller in this module reads a
+ * `run()` result, so asking for BigInts costs nothing and keeps the rowid out of
+ * the Number range problem entirely.
+ */
+function makeWriteStatementSafe(prepared: StatementSync, sql: string): void {
+  if (!WRITE_VERBS.has(statementVerb(sql))) return
+  prepared.setReadBigInts(true)
+}
+
 function countUserTables(db: DatabaseSync): number {
   // Only the core tables count as identity. `session_seal` and its index are
   // additions an older store gains on its first writable open, so a file that
@@ -381,11 +413,13 @@ function initializeStore(db: DatabaseSync): string {
   db.exec('BEGIN IMMEDIATE')
   try {
     for (const statement of SCHEMA_STATEMENTS) db.exec(statement)
-    db.prepare(
+    const insertMeta = db.prepare(
       `INSERT INTO storage_meta
          (singleton, store_uuid, schema_version, dsh_contract_version, created_at_ms, updated_at_ms)
        VALUES (1, ?, ?, ?, ?, ?)`,
-    ).run(storeUuid, SCHEMA_VERSION, SESSION_FORMAT_VERSION, now, now)
+    )
+    makeWriteStatementSafe(insertMeta, 'INSERT')
+    insertMeta.run(storeUuid, SCHEMA_VERSION, SESSION_FORMAT_VERSION, now, now)
     db.exec(`PRAGMA application_id = ${APPLICATION_ID}`)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
     db.exec('COMMIT')
@@ -448,7 +482,9 @@ function upgradeLayout(db: DatabaseSync, path: string, found: number): number | 
   db.exec('BEGIN IMMEDIATE')
   try {
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
-    db.prepare('UPDATE storage_meta SET schema_version = ? WHERE singleton = 1').run(SCHEMA_VERSION)
+    const setLayout = db.prepare('UPDATE storage_meta SET schema_version = ? WHERE singleton = 1')
+    makeWriteStatementSafe(setLayout, 'UPDATE')
+    setLayout.run(SCHEMA_VERSION)
     db.exec('COMMIT')
   } catch (error) {
     try {
@@ -776,31 +812,42 @@ export class SessionDatabase {
   /** Committed frame moves whose space reclamation still needs a retry. */
   private pendingReclaimBytes = 0
 
+  private readonly db: DatabaseSync
+  readonly path: string
+  readonly storeUuid: string
+  /**
+   * Whether this file has the chunk table.
+   *
+   * A v1 store has none, and a pure reader (`readOnly` with `repair: false`,
+   * which is what the search indexer and the inspector use) must not create it:
+   * the table left by another build is not ours to touch. Queries that name it
+   * are therefore skipped rather than attempted — for such a file the whole log
+   * is the unsealed tail, which is exactly what v1 means.
+   */
+  private readonly chunks: boolean
+  /**
+   * Whether this connection may write.
+   *
+   * The full-text index is derived, so a read-only connection cannot build a
+   * missing one: it answers "no index here" and the caller falls back to
+   * scanning, instead of failing the search or writing through a connection
+   * opened on someone else's file.
+   */
+  private readonly writable: boolean
+
   private constructor(
-    private readonly db: DatabaseSync,
-    readonly path: string,
-    readonly storeUuid: string,
-    /**
-     * Whether this file has the chunk table.
-     *
-     * A v1 store has none, and a pure reader (`readOnly` with `repair: false`,
-     * which is what the search indexer and the inspector use) must not create it:
-     * the table left by another build is not ours to touch. Queries that name it
-     * are therefore skipped rather than attempted — for such a file the whole log
-     * is the unsealed tail, which is exactly what v1 means.
-     */
-    private readonly chunks: boolean,
+    db: DatabaseSync,
+    path: string,
+    storeUuid: string,
+    chunks: boolean,
     frames: ByteLru<readonly string[]>,
-    /**
-     * Whether this connection may write.
-     *
-     * The full-text index is derived, so a read-only connection cannot build a
-     * missing one: it answers "no index here" and the caller falls back to
-     * scanning, instead of failing the search or writing through a connection
-     * opened on someone else's file.
-     */
-    private readonly writable: boolean = false,
+    writable: boolean = false,
   ) {
+    this.db = db
+    this.path = path
+    this.storeUuid = storeUuid
+    this.chunks = chunks
+    this.writable = writable
     this.frames = frames
     // Each open owns a namespace: replacing a file can preserve both its path
     // and store UUID while changing every payload under the same frame keys.
@@ -1282,6 +1329,7 @@ export class SessionDatabase {
     const cached = this.statements.get(sql)
     if (cached !== undefined) return cached
     const prepared = this.db.prepare(sql)
+    makeWriteStatementSafe(prepared, sql)
     this.statements.set(sql, prepared)
     return prepared
   }

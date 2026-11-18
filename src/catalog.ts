@@ -73,8 +73,11 @@ export interface CatalogDocument {
 /** Why a catalog write could not land where it was asked to. */
 export class CatalogError extends Error {
   override readonly name = 'CatalogError'
-  constructor(message: string, readonly path: string) {
+  /** Where the write was refused. */
+  readonly path: string
+  constructor(message: string, path: string) {
     super(message)
+    this.path = path
   }
 }
 

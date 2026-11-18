@@ -37,7 +37,11 @@ export interface PerformanceState {
 }
 export class PerformanceConflictError extends Error {
   override readonly name = 'PerformanceConflictError'
-  constructor(readonly currentRevision: string) { super('performance settings changed; reload before saving') }
+  readonly currentRevision: string
+  constructor(currentRevision: string) {
+    super('performance settings changed; reload before saving')
+    this.currentRevision = currentRevision
+  }
 }
 export class PerformanceDisposedError extends Error {
   override readonly name = 'PerformanceDisposedError'
@@ -90,15 +94,19 @@ export class PerformanceController implements Disposable {
   private readonly pending = new Set<AbortController>()
   private readonly listeners = new Set<(state: PerformanceState) => void>()
   private readonly unsubscribePreferences: () => void
+  private readonly preferences: PreferencesHost
+  private readonly maxPendingRequests: number
 
   constructor(
-    private readonly preferences: PreferencesHost,
+    preferences: PreferencesHost,
     capabilities: PerformanceCapabilities = DEFAULT_CAPABILITIES,
-    private readonly maxPendingRequests = 128,
+    maxPendingRequests = 128,
   ) {
     if (!Number.isSafeInteger(maxPendingRequests) || maxPendingRequests < 1) {
       throw new PreferencesUsageError('maxPendingRequests must be a positive integer')
     }
+    this.preferences = preferences
+    this.maxPendingRequests = maxPendingRequests
     this.capabilities = capabilitiesOf(capabilities)
     this.desired = preferences.read().performance
     this.unsubscribePreferences = preferences.subscribe((next) => {

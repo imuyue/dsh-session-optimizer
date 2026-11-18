@@ -11,20 +11,20 @@ afterEach(() => { setEnvironmentData(key, previous) })
 describe('worker inherited runtime resolution', () => {
   it('keeps plain Node/type-transform startup independent of DSH', () => {
     setEnvironmentData(key, undefined)
-    const args = ['--experimental-transform-types']
+    const args = ['--enable-source-maps']
     expect(workerRuntimeExecArgv(args, () => { throw new Error('must not resolve DSH') })).toEqual(args)
     expect(workerRuntimeExecArgv(args)).not.toBe(args)
   })
   it('resolves the Worker peer graph in the parent without a native bootstrap', () => {
     setEnvironmentData(key, { resolution: { linkedRoots: [] } })
     const requested: string[] = []
-    const result = workerRuntimeExecArgv(['--experimental-transform-types'], name => {
+    const result = workerRuntimeExecArgv(['--enable-source-maps'], name => {
       requested.push(name)
       return `file:///host/${name}/index.js`
     })
     expect(requested).toEqual(['@deepseek-ai/dsh-session', '@deepseek-ai/dsh-session-persistence'])
     expect(result[0]).toBe('--import')
-    expect(result[2]).toBe('--experimental-transform-types')
+    expect(result[2]).toBe('--enable-source-maps')
     const source = decodeURIComponent(result[1].slice('data:text/javascript,'.length))
     expect(source).toContain('registerHooks')
     expect(source).not.toContain('profile-resolution-bootstrap')

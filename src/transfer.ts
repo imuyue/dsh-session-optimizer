@@ -38,7 +38,7 @@ import { SessionDatabase, ensureSessionDirectory, type LoadedHeader, type Sqlite
 import { databasePath, decodeSegment, encodeSegment, sessionDir } from './format.ts'
 import { SessionWriteLease } from './lease.ts'
 import { scanSessions } from './storage.ts'
-import { releaseStore } from './store-lease.ts'
+import { holdStore, withStoreHeld } from './store-lease.ts'
 
 /** Import writes no WAL sidecars: a published session is one self-contained file. */
 export const IMPORT_SETTINGS: SqliteSettings = {
@@ -1049,10 +1049,15 @@ export async function readSqliteHeader(path: string): Promise<LoadedHeader> {
 
 /** Remove a store and every sidecar a crash could have left beside it. */
 export async function removeDatabase(path: string): Promise<void> {
-  await releaseStore(path)
-  for (const suffix of DATABASE_SUFFIXES) {
-    await rm(`${path}${suffix}`, { force: true })
-  }
+  // The hold closes the cached connection and keeps it closed for the duration:
+  // without it a read that arrives between the release and the `rm` reopens the
+  // file, and on Windows the `rm` then fails with `EBUSY` on a store nothing is
+  // legitimately using any more.
+  await withStoreHeld(path, async () => {
+    for (const suffix of DATABASE_SUFFIXES) {
+      await rm(`${path}${suffix}`, { force: true })
+    }
+  })
 }
 
 /**
@@ -1212,32 +1217,40 @@ async function publishDatabaseWithPolicy(
 async function moveDatabase(from: string, to: string): Promise<void> {
   // Both names are released first: a connection this process still holds makes
   // the first `rename` fail with `EBUSY` on Windows, and the handle is ours, so
-  // no retry outlasts it.
-  await releaseStore(from)
-  await releaseStore(to)
-  const moved: string[] = []
+  // no retry outlasts it. The holds are taken before the renames, because the
+  // release alone leaves a window in which a read (a warm-up, a refresh) opens
+  // the file again and the rename then meets the handle it just closed.
+  const releaseFrom = await holdStore(from)
+  let releaseTo: (() => void) | undefined
   try {
-    for (const suffix of ['-wal', '-shm', '-journal']) {
-      try {
-        await rename(`${from}${suffix}`, `${to}${suffix}`)
-        moved.push(suffix)
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    releaseTo = await holdStore(to)
+    const moved: string[] = []
+    try {
+      for (const suffix of ['-wal', '-shm', '-journal']) {
+        try {
+          await rename(`${from}${suffix}`, `${to}${suffix}`)
+          moved.push(suffix)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+        }
       }
+      await rename(from, to)
+    } catch (error) {
+      // A later sharing/failure must not detach a committed WAL from its old
+      // main file. Restore only files moved by this call, in reverse order.
+      const errors: unknown[] = [error]
+      for (const suffix of moved.reverse()) {
+        try { await rename(`${to}${suffix}`, `${from}${suffix}`) }
+        catch (restoreError) { errors.push(restoreError) }
+      }
+      if (errors.length > 1) {
+        throw new AggregateError(errors, `database move from ${from} to ${to} failed and sidecar restoration was incomplete; preserve both paths for recovery`)
+      }
+      throw error
     }
-    await rename(from, to)
-  } catch (error) {
-    // A later sharing/IO failure must not detach a committed WAL from its old
-    // main file. Restore only files moved by this call, in reverse order.
-    const errors: unknown[] = [error]
-    for (const suffix of moved.reverse()) {
-      try { await rename(`${to}${suffix}`, `${from}${suffix}`) }
-      catch (restoreError) { errors.push(restoreError) }
-    }
-    if (errors.length > 1) {
-      throw new AggregateError(errors, `database move from ${from} to ${to} failed and sidecar restoration was incomplete; preserve both paths for recovery`)
-    }
-    throw error
+  } finally {
+    releaseTo?.()
+    releaseFrom()
   }
 }
 
