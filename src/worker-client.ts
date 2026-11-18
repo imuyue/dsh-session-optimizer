@@ -23,6 +23,7 @@ import { fromWireError, toWireError, type WireRequest, type WireResponse } from 
 import { PAGED_MIN_EVENTS, assemblePaged, type HeaderBatchEntry, type StorageExecutor } from './executor.ts'
 import type { SearchHitRow } from './database.ts'
 import { currentPageTransferFormat } from './page-transfer.ts'
+import { registerStoreReleaser } from './store-lease.ts'
 
 interface Pending {
   resolve: (value: unknown) => void
@@ -77,7 +78,16 @@ export class WorkerExecutor implements StorageExecutor {
 
   constructor(private readonly preparedSessionCacheSize: number) {
     this.worker = this.spawn()
+    this.unregister = registerStoreReleaser(async (path) => { await this.release(path) })
   }
+
+  /**
+   * Stop answering the registry on teardown.
+   *
+   * A closed executor has no worker to ask, and a stale entry would make every
+   * later publish wait on a round trip that is rejected anyway.
+   */
+  private readonly unregister: () => void
 
   private spawn(): Worker {
     this.generation += 1
@@ -263,8 +273,22 @@ export class WorkerExecutor implements StorageExecutor {
     return this.call<number>('sizeBytes', [path, settings])
   }
 
+  /**
+   * Let go of one store so it can be renamed or unlinked.
+   *
+   * The connection lives on the worker thread, so the release has to travel
+   * there; a terminate would also work but would cost the whole worker (and the
+   * other conversations it is serving) for one file. Deliberately not retryable:
+   * a worker that died took its handles with it, which is the state the caller
+   * wanted.
+   */
+  release(path: string): Promise<void> {
+    return this.call<void>('forget', [path])
+  }
+
   async close(): Promise<void> {
     if (this.closed) return
+    this.unregister()
     // Marked closed before the round trip, not after: `call()` checks this flag,
     // and the wait below can last as long as CLOSE_TIMEOUT_MS, during which a
     // caller would otherwise queue work onto a worker that is being torn down.

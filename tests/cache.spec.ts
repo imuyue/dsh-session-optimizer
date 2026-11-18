@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { InlineExecutor } from '../src/executor.ts'
 import { databasePath } from '../src/format.ts'
 import { publishDatabase, writeSqliteSession, type LogCopy } from '../src/transfer.ts'
+import { releaseStore } from '../src/store-lease.ts'
 
 const SETTINGS = { journalMode: 'wal', synchronous: 'full', busyTimeoutMs: 5000 } as const
 const READ_SETTINGS = { ...SETTINGS, readOnly: true, repair: false } as const
@@ -158,6 +159,11 @@ describe('a cached store follows its name', () => {
     const executor = executorOf()
     expect((await executor.loadSession(path, SETTINGS))?.events.length).toBe(2)
 
+    // Windows will not unlink a file this process still has open, and the
+    // executor is holding one by design. A delete that comes from outside the
+    // plugin has to ask for the release first — which is what the transfer path
+    // does before it replaces a store.
+    await releaseStore(path)
     await rm(path)
     await expect(executor.loadSession(path, READ_SETTINGS)).rejects.toThrow()
   })

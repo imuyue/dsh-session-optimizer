@@ -23,6 +23,7 @@ import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-j
 import * as SqliteSessionPersistence from '../src/index.ts'
 import { SessionBackendCatalog, catalogPath } from '../src/catalog.ts'
 import { databasePath, sessionDir } from '../src/format.ts'
+import { releaseStore } from '../src/store-lease.ts'
 
 interface Fixture {
   readonly base: string
@@ -236,6 +237,9 @@ describe('hybrid routing', () => {
     // directory goes away and nothing tells the backend. The runtime has no
     // delete of its own for the plugin to hook, so the listing is where the
     // truth has to catch up.
+    // Windows refuses to remove a directory while this process holds the store
+    // inside it open, and the executor caches connections by design.
+    await releaseStore(databasePath(fixture.sqliteRoot, '/tmp/hybrid', 'session-gone'))
     await rm(sessionDir(fixture.sqliteRoot, '/tmp/hybrid', 'session-gone'), { recursive: true, force: true })
 
     const listed = await ctx.sessionPersistence.list()

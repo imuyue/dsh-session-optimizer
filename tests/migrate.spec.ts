@@ -400,7 +400,11 @@ describe('cwd on the host that opens the copy', () => {
     const cwd = report.items[0]?.cwd
     expect(cwd).toBeDefined()
     expect(isAbsolute(cwd as string)).toBe(true)
-    expect(cwd).not.toContain('\\')
+    // A Windows path keeps its backslashes here: this host's runtime accepts
+    // `C:\APP\x` as absolute, so translating it would invent a directory the
+    // conversation was never written under.
+    if (process.platform === 'win32') expect(cwd).toContain('\\')
+    else expect(cwd).not.toContain('\\')
 
     // The store reads back through its own validator, which is the check the
     // runtime applies when a conversation is opened from the list.

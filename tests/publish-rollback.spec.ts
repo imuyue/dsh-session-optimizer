@@ -53,7 +53,16 @@ async function fixture() {
     process.kill(process.pid, 'SIGKILL');
   `
   const child = spawnSync(process.execPath, ['--experimental-transform-types', '--input-type=module', '-e', childCode], { encoding: 'utf8', timeout: 10000 })
-  expect(child.signal, child.stderr).toBe('SIGKILL')
+  // Windows has no signals: `process.kill(pid, 'SIGKILL')` terminates the process
+  // through `TerminateProcess`, so `signal` is null and only the status reports
+  // the kill. The child's work is the point — it died after a committed append —
+  // so the assertion is that it did not exit cleanly.
+  if (process.platform === 'win32') {
+    expect(child.signal, child.stderr).toBeNull()
+    expect(child.status, child.stderr).not.toBe(0)
+  } else {
+    expect(child.signal, child.stderr).toBe('SIGKILL')
+  }
   expect(JSON.parse(child.stdout)[0]?.data?.title).toBe('old committed title')
   // A fresh private writer dies only after a FULL committed append. No live
   // reader or writer holds the real WAL/SHM during the publication attempt.

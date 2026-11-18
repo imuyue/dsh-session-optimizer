@@ -381,7 +381,14 @@ describe('MERGED-03: overwrite excludes an active source writer', () => {
     const catalog = await SessionBackendCatalog.open(join(base, 'state'))
     catalog.route(h.id, 'sqlite'); await catalog.save()
     const catalogBefore = await readFile(catalog.location)
-    const heldTarget = await SessionWriteLease.acquire(sessionDir(jsonlRoot, h.cwd, h.id), h.id)
+    // The JSONL provider arbitrates its own writers: POSIX `flock` on
+    // `session.lock`, a named kernel semaphore on Windows. Taking this plugin's
+    // marker lease here would prove nothing about the provider's exclusion, so
+    // the contention is set up through the provider's own arbiter.
+    const provider = target.persistence as typeof target.persistence & {
+      acquireLease(id: SessionId, cwd: string | undefined, dir: string): Promise<{ release(): Promise<void> }>
+    }
+    const heldTarget = await provider.acquireLease(h.id, h.cwd, sessionDir(jsonlRoot, h.cwd, h.id))
     cleanup.push(() => heldTarget.release())
     const blocked = await runMigration(catalog, { id: 'sqlite', root: sqliteRoot }, { id: 'jsonl', root: jsonlRoot }, { mode: 'overwrite', verify: true, session: h.id })
     expect(blocked.status).toBe('failed')

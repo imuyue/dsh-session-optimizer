@@ -43,6 +43,7 @@ import { basename, dirname, join } from 'node:path'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { SessionBackendCatalog, type SessionBackendId } from './catalog.ts'
+import { releaseStore } from './store-lease.ts'
 import { SessionDatabase, ensureSessionDirectory, type LoadedHeader } from './database.ts'
 import { DATABASE_FILENAME, databasePath, decodeSegment, encodeSegment, sessionDir } from './format.ts'
 import { storedTitle } from './inspect.ts'
@@ -1250,6 +1251,10 @@ export async function archiveSource(
       // The database and its sidecars move together: a `-wal` left behind would
       // replay writes into the fresh copy's directory name.
       await ensureSessionDirectory(parked)
+      // The archive is a move, and Windows refuses to move a store whose handle
+      // this process still holds. Dropping the cached connection first is what
+      // makes "set the old log aside" work outside a POSIX host.
+      await releaseStore(entry.path)
       for (const suffix of ['', '-wal', '-shm', '-journal']) {
         if (!existsSync(`${entry.path}${suffix}`)) continue
         await rename(`${entry.path}${suffix}`, join(parked, `${DATABASE_FILENAME}${suffix}`))

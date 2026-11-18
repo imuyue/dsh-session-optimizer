@@ -69,6 +69,17 @@ const handlers: Record<string, Handler> = {
   indexStore: (path: string, settings: SqliteSettings) => executor.indexStore(path, settings),
   findDatabase: (root: string, id: string) => findDatabasePath(root, id as SessionId),
   /**
+   * Drop the connection held for one store.
+   *
+   * The publish and delete paths ask for this before renaming or unlinking a
+   * file: on Windows our own open handle makes both fail with `EBUSY`, and the
+   * handle is on this thread.
+   */
+  forget: (path: string) => {
+    executor.forget(path)
+    return Promise.resolve()
+  },
+  /**
    * The paged read's two halves.
    *
    * A long log is handed over page by page instead of as one object graph: the

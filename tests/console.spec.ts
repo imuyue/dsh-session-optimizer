@@ -28,6 +28,7 @@ import { METRIC_OPS, MetricsRegistry } from '../src/metrics.ts'
 import { SCHEMA_VERSION } from '../src/schema.ts'
 import { clearDiagnostics, recordDiagnostic } from '../src/diagnostics.ts'
 import { inspectOverview, type InspectTarget } from '../src/inspect.ts'
+import { releaseStore } from '../src/store-lease.ts'
 import {
   createPreferencesHost,
   preferencesPath,
@@ -234,6 +235,9 @@ describe('inspect', () => {
     await seedSession(root, 'session-moved', '/work/demo', 1)
     const original = databasePath(root, '/work/demo', 'session-moved' as SessionId)
     const renamed = join(dirname(dirname(original)), 'not-the-encoded-id', 'session.db')
+    // The seeding context still caches the connection, and Windows refuses to
+    // rename a directory while a handle inside it is open.
+    await releaseStore(original)
     await rename(dirname(original), dirname(renamed))
 
     // The id lives in the header, so the conversation is still listed under its
@@ -720,6 +724,9 @@ describe('the diagnostics routes', () => {
     // SQLite recovers a readable database from a clobbered main file and the
     // store would simply list fine.
     const broken = databasePath(root, '/work/demo', 'session-broken' as SessionId)
+    // The seeding context caches its connection; Windows will not unlink a
+    // sidecar this process holds open.
+    await releaseStore(broken)
     await rm(`${broken}-wal`, { force: true })
     await rm(`${broken}-shm`, { force: true })
     await writeFile(broken, 'not a database')

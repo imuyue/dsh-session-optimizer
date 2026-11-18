@@ -188,6 +188,11 @@ describe('the file stamp', () => {
     // fractional part of `mtimeMs` and prove nothing about `ctime`.
     await utimes(file, atime, mtime)
     const before = fileStamp(file)
+    // NTFS advances the inode change time on a coarse tick (~15 ms here), so a
+    // rewrite inside the same tick leaves `ctime` untouched and the stamp would
+    // prove nothing about it. Waiting one tick is what a real rewrite a moment
+    // later looks like, and it is the only way to observe this on Windows.
+    await new Promise((resolve) => setTimeout(resolve, 40))
     writeFileSync(file, 'bbbb')
     await utimes(file, atime, mtime)
     expect(fileStamp(file)).not.toBe(before)

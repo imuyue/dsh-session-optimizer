@@ -35,6 +35,7 @@ import {
   type SqliteSettings,
 } from './database.ts'
 import { findDatabasePath } from './storage.ts'
+import { registerStoreReleaser } from './store-lease.ts'
 
 /**
  * One store's header as a listing sees it.
@@ -260,6 +261,20 @@ class DatabaseCache {
     for (const entry of this.entries.values()) entry.db.close()
     this.entries.clear()
   }
+
+  /**
+   * Close the connection held for one path, if any.
+   *
+   * Used before a store is renamed or unlinked: on Windows an open handle of our
+   * own makes both fail with `EBUSY`, and the only cure is to let go. The next
+   * read reopens from whatever the name leads to then.
+   */
+  release(path: string): void {
+    const cached = this.entries.get(path)
+    if (cached === undefined) return
+    this.entries.delete(path)
+    cached.db.close()
+  }
 }
 
 /**
@@ -320,6 +335,11 @@ class HeaderCache {
     if (this.entries.size <= paths.length) return
     const live = new Set(paths)
     for (const path of this.entries.keys()) if (!live.has(path)) this.entries.delete(path)
+  }
+
+  /** Forget one path's remembered header, so the next read stats it again. */
+  release(path: string): void {
+    this.entries.delete(path)
   }
 
   clear(): void {
@@ -458,6 +478,22 @@ export class InlineExecutor implements StorageExecutor {
 
   constructor(preparedSessionCacheSize: number) {
     this.cache = new DatabaseCache(preparedSessionCacheSize, this.frames)
+    this.unregister = registerStoreReleaser(async (path) => { this.forget(path) })
+  }
+
+  private readonly unregister: () => void
+
+  /**
+   * Let go of a store so it can be renamed or unlinked.
+   *
+   * Windows refuses both while any handle in the process is open — including a
+   * cached connection of our own — and retrying cannot outlast that, because the
+   * handle belongs to us. Dropping the entry closes the connection; the next read
+   * reopens the file the name leads to by then.
+   */
+  forget(path: string): void {
+    this.cache.release(path)
+    this.headers.release(path)
   }
 
   /**
@@ -600,6 +636,7 @@ export class InlineExecutor implements StorageExecutor {
   }
 
   async close(): Promise<void> {
+    this.unregister()
     this.cache.clear()
     this.headers.clear()
     this.frames.clear()

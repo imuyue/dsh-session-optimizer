@@ -23,7 +23,7 @@
 
 import { createReadStream, existsSync } from 'node:fs'
 import { link, mkdir, readdir, rename, rm, stat, unlink } from 'node:fs/promises'
-import { basename, dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve, win32 } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import { readArtifactZstd } from './artifact-zstd.ts'
 import { Context } from '@deepseek-ai/cordis'
@@ -38,6 +38,7 @@ import { SessionDatabase, ensureSessionDirectory, type LoadedHeader, type Sqlite
 import { databasePath, decodeSegment, encodeSegment, sessionDir } from './format.ts'
 import { SessionWriteLease } from './lease.ts'
 import { scanSessions } from './storage.ts'
+import { releaseStore } from './store-lease.ts'
 
 /** Import writes no WAL sidecars: a published session is one self-contained file. */
 export const IMPORT_SETTINGS: SqliteSettings = {
@@ -744,20 +745,25 @@ function hostKind(): 'windows' | 'posix' {
   return process.platform === 'win32' ? 'windows' : 'posix'
 }
 
-/** The `cwd` the given host's validator accepts, or `undefined` when relative. */
+/**
+ * The `cwd` the given host's validator accepts, or `undefined` when relative.
+ *
+ * "Accepts" is the runtime's own test, not a stricter one of our making: the
+ * provider validates a header with that host's `path.isAbsolute`, and on Windows
+ * that accepts a drive path (`C:\APP\x`), a UNC path (`\\server\share`) and a
+ * root-relative path (`/work/x`, `\work\x` — anchored to the current drive). All
+ * three are absolute to the runtime that will open the store, so all three are
+ * carried through; only a genuinely relative path (`C:APP`, `foo\bar`) is refused.
+ */
 function portableCwd(cwd: string | undefined, host: 'windows' | 'posix'): string | undefined {
   if (cwd === undefined) return undefined
-  if (host === 'windows') return isWindowsAbsolute(cwd) ? cwd : undefined
+  if (host === 'windows') return win32.isAbsolute(cwd) ? cwd : undefined
   if (cwd.startsWith('/')) return cwd
   const drive = /^([A-Za-z]):[\\/](.*)$/.exec(cwd)
   if (drive !== null) return `/mnt/${(drive[1] as string).toLowerCase()}/${(drive[2] as string).replaceAll('\\', '/')}`
   const unc = /^[\\/]{2}([^\\/]+)[\\/](.*)$/.exec(cwd)
   if (unc !== null) return `/${(unc[1] as string).toLowerCase()}/${(unc[2] as string).replaceAll('\\', '/')}`
   return undefined
-}
-
-function isWindowsAbsolute(cwd: string): boolean {
-  return /^[A-Za-z]:[\\/]/.test(cwd) || cwd.startsWith('\\\\')
 }
 
 /**
@@ -1043,6 +1049,7 @@ export async function readSqliteHeader(path: string): Promise<LoadedHeader> {
 
 /** Remove a store and every sidecar a crash could have left beside it. */
 export async function removeDatabase(path: string): Promise<void> {
+  await releaseStore(path)
   for (const suffix of DATABASE_SUFFIXES) {
     await rm(`${path}${suffix}`, { force: true })
   }
@@ -1203,6 +1210,11 @@ async function publishDatabaseWithPolicy(
  * new main file next to an old write-ahead log.
  */
 async function moveDatabase(from: string, to: string): Promise<void> {
+  // Both names are released first: a connection this process still holds makes
+  // the first `rename` fail with `EBUSY` on Windows, and the handle is ours, so
+  // no retry outlasts it.
+  await releaseStore(from)
+  await releaseStore(to)
   const moved: string[] = []
   try {
     for (const suffix of ['-wal', '-shm', '-journal']) {
