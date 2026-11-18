@@ -1,8 +1,9 @@
 import { fetchWorkspaceMemberships, type WorkspaceProjection } from './api.ts'
+import { supportedHost } from './host-compat.ts'
 import type { MigrationReport } from './types.ts'
 
 interface Model { upsertView(workspace: WorkspaceProjection): void }
-/** rc.1 adapter: merge detached official views only; never reset errors or mutate project accounts. */
+/** 0.2.x adapter: merge detached official views only; never reset errors or mutate project accounts. */
 export async function syncWorkspaceMemberships(workspaces: unknown, report: MigrationReport, signal: AbortSignal, active: () => boolean = () => true): Promise<void> {
   if (!workspaces || typeof workspaces !== 'object' || (report.status !== 'completed' && report.status !== 'partial')) return
   const service = workspaces as { model?: Model; list?: unknown }, model = service.model
@@ -13,7 +14,7 @@ export async function syncWorkspaceMemberships(workspaces: unknown, report: Migr
     if (!active() || signal.aborted) return
     const selected = ids.slice(offset, offset + 50), expected = new Set(selected)
     const result = await fetchWorkspaceMemberships(selected, signal)
-    if (!active() || signal.aborted || !result.available || result.dshVersion !== '0.2.2-rc.1'
+    if (!active() || signal.aborted || !result.available || !supportedHost(result.dshVersion)
       || !Array.isArray(result.workspaces) || !Array.isArray(result.memberships)) return
     const views = new Map(result.workspaces.map(view => [view.workspaceId, view]))
     for (const membership of result.memberships) {

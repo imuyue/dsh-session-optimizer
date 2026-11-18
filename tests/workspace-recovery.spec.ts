@@ -37,13 +37,16 @@ describe('terminal Workspace follow recovery', () => {
     a.upsertView({ late: true }); f.options[0]!.failed(new Error('late'))
     expect(f.model.upsertView).toHaveBeenCalledTimes(1); expect(f.model.getSnapshot().error).toBe(error)
   })
-  it('does not open a second consumer for healthy, permission, endpoint, version or incompatible models', async () => {
+  it('does not open a second consumer for healthy, permission, endpoint or below-floor models, and does open one on a later build', async () => {
     vi.useFakeTimers()
     for (const e of [null, { code: 'gateway/forbidden', details: { endpoint: 'workspace/follow' } }, { ...error, details: { endpoint: 'session/follow' } }]) {
       const f = fixture(e), stop = f.install(); await vi.runOnlyPendingTimersAsync(); expect(f.load).not.toHaveBeenCalled(); stop()
     }
-    const f = fixture(), stop = f.install('0.2.3'); await vi.runOnlyPendingTimersAsync(); expect(f.load).not.toHaveBeenCalled(); stop()
+    const off = fixture(), stopOff = off.install('0.2.1'); await vi.runOnlyPendingTimersAsync(); expect(off.load).not.toHaveBeenCalled(); stopOff()
+    const f = fixture(), stop = f.install('0.2.2-rc.3'); await vi.runOnlyPendingTimersAsync(); expect(f.load).toHaveBeenCalledTimes(1); stop()
+    const ahead = fixture(), stopAhead = ahead.install('0.3.1'); await vi.runOnlyPendingTimersAsync(); expect(ahead.load).toHaveBeenCalledTimes(1); stopAhead()
     expect(installWorkspaceRecovery({ model: {}, list: {} }, f.remote, '0.2.2-rc.1', f.load)).toBeTypeOf('function')
+    expect(installWorkspaceRecovery({ model: {}, list: {} }, f.remote, '0.2.2-rc.3', f.load)).toBeTypeOf('function')
   })
   it('reacts to a later terminal error but coalesces duplicate owners and notifications', async () => {
     vi.useFakeTimers(); const f = fixture(null), stop = f.install(), duplicate = f.install()

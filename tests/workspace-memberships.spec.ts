@@ -37,7 +37,7 @@ it('chunks identity sets to the bounded Owner route', async () => {
 })
 it('declines unknown Core versions and inconsistent projections', async () => {
   const target = service()
-  for (const result of [{ ...answer, dshVersion: '0.3.0' }, { ...answer, workspaces: [{ ...view, sessionIds: ['foreign'] }] }]) {
+  for (const result of [{ ...answer, dshVersion: '0.2.1' }, { ...answer, workspaces: [{ ...view, sessionIds: ['foreign'] }] }]) {
     api.fetchWorkspaceMemberships.mockResolvedValue(result)
     await syncWorkspaceMemberships(target, report, new AbortController().signal)
   }

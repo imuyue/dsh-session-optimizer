@@ -1,4 +1,6 @@
-/** rc.1 compatibility for a Workspace follow consumer stopped by service replacement. */
+import { supportedHost } from './host-compat.ts'
+
+/** 0.2.x compatibility for a Workspace follow consumer stopped by service replacement. */
 
 type Snapshot = { state?: string; error?: { code?: string; details?: { endpoint?: string } } | null }
 type Model = {
@@ -27,7 +29,7 @@ const unavailable = (s: Snapshot) => s.state === 'error' && isRemoteFailure(s.er
 
 export function installWorkspaceRecovery(workspaces: unknown, remote: unknown, version: string | undefined, load: () => unknown): () => void {
   const noop = () => undefined
-  if (version !== '0.2.2-rc.1' || !workspaces || typeof workspaces !== 'object') return noop
+  if (!supportedHost(version) || !workspaces || typeof workspaces !== 'object') return noop
   const service = workspaces as { model?: Model; list?: unknown }
   const model = service.model
   if (!model || service.list !== model || methods.some(key => typeof model[key] !== 'function') || owners.has(model)) return noop

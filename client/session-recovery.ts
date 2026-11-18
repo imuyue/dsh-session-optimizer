@@ -1,3 +1,4 @@
+import { supportedHost } from './host-compat.ts'
 import type { MigrationReport } from './types.ts'
 
 /** Public binding lookup; the implementation-specific adapter stays below. */
@@ -15,11 +16,13 @@ interface Rc1Session {
 const pending = new WeakMap<object, Promise<RecoveryResult>>()
 
 /**
- * Compatibility for the verified 0.2.2-rc.1 Client only. Its disposal relay sets
- * removed permanently; refresh() only reloads the sidebar. resync is a concrete
+ * Compatibility for the 0.2.x Client. Its disposal relay sets `removed`
+ * permanently; `refresh()` only reloads the sidebar. `resync` is a concrete
  * implementation method, NOT a public SessionsService reset API. Reuse it only
- * for successful migration IDs and the exact known shape; keep the same binding,
- * drafts, retained references and independently owned projection state.
+ * for successful migration IDs and the exact known shape — the field probes
+ * below are the gate; `supportedHost` only excludes a host line the adapters
+ * were never written against. Keep the same binding, drafts, retained
+ * references and independently owned projection state.
  */
 export async function recoverMigratedSessions(
   sessions: RecoverySessions,
@@ -36,7 +39,7 @@ export async function recoverMigratedSessions(
     if (typeof face !== 'object' || face === null) continue
     const value = face as Rc1Session
     if (typeof value.getSnapshot !== 'function' || value.getSnapshot().removed !== true) continue
-    if (hostVersion !== '0.2.2-rc.1') { results.push({ id, status: 'unsupported' }); continue }
+    if (!supportedHost(hostVersion)) { results.push({ id, status: 'unsupported' }); continue }
     const removed = Object.getOwnPropertyDescriptor(face, 'removed')
     if (removed?.value !== true || removed.writable !== true || typeof value.resync !== 'function'
       || !Number.isSafeInteger(value.openGeneration) || typeof value.notifier?.markDirty !== 'function') {
