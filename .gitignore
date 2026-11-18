@@ -19,3 +19,31 @@ desktop.ini
 
 # 历史设计记录、开发探针与发行包：保留在本机，不随仓库发布
 archive/
+
+# 巡查/研究资料与复现脚本：只在本机，绝不进仓库
+资料/
+巡查报告-*.md
+repro/
+validation/
+.bug-hunter/
+.code-security/
+
+# 真实会话数据：任何形态都不提交（库里是明文对话）
+*.db
+*.db-wal
+*.db-shm
+session.db*
+*.jsonl
+
+# 凭据与本机配置
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# 安装包与打包产物
+*.tgz
+*.tar.gz
+*.zip
