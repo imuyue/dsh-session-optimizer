@@ -1401,7 +1401,18 @@ export class SessionDatabase {
    * answering out of a partial index and quietly missing matches.
    */
   private indexEvents(events: readonly SessionEvent[], base: number): void {
-    const built = this.indexedRows()
+    // A store that has never been searched has no covered count yet, and that is
+    // not the same as "the index is behind": the batch below indexes exactly the
+    // rows this transaction writes. Reading it as `0` is what lets a brand-new
+    // store keep its index trustworthy — without this, the first append of every
+    // new conversation indexed the events and then never recorded that it had,
+    // so the first search rebuilt an index that was already complete.
+    //
+    // `base` is what makes this safe for older stores: they were written before
+    // the count existed and carry rows the count never saw, so their `base` is
+    // non-zero and this cannot stamp them by accident. They pay for one rebuild,
+    // which is also what gives them a count to keep up to date from then on.
+    const built = this.indexedRows() ?? 0
     const insert = this.statement('INSERT INTO event_fts (rowid, text) VALUES (?, ?)')
     for (const event of events) {
       const text = semanticTextOf(event)

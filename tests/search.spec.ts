@@ -199,6 +199,54 @@ describe('searching a store', () => {
     expect(store.searchHits(matchQueryFor('ENOSPC') ?? '', 10)).toEqual([])
   })
 
+  it('records the covered count from the first append, so the index is trusted', async () => {
+    // Every append indexes its own events, so a store the plugin wrote itself is
+    // complete from the moment it exists. The count that says so was never
+    // written on a brand-new store (`indexedRows()` returned `undefined`, and
+    // `undefined === 0` is false), so every first search rebuilt an index that
+    // was already there — 108 of 123 stores on this machine.
+    const root = await makeRoot()
+    await ensureSessionDirectory(root)
+    const path = databasePath(root, '/work/search', 'session-live-index')
+    const store = SessionDatabase.open(path, SETTINGS)
+    stores.push(store)
+    const raw = store as unknown as {
+      statement: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown }
+    }
+
+    store.materializeHeader(headerOf('session-live-index'), 0)
+    store.appendBatch(headerOf('session-live-index'), turn(0, 1, '排位赛第一轮', 'ENOSPC 第一轮'), true, 0)
+    expect(Number((raw.statement('SELECT built_rows FROM event_fts_state WHERE singleton = 1').get() as { built_rows: unknown }).built_rows)).toBe(6)
+
+    store.appendBatch(headerOf('session-live-index'), turn(6, 2, '排位赛第二轮', 'ENOSPC 第二轮'), true, 0)
+    expect(Number((raw.statement('SELECT built_rows FROM event_fts_state WHERE singleton = 1').get() as { built_rows: unknown }).built_rows)).toBe(12)
+    expect(store.searchHits(matchQueryFor('ENOSPC') ?? '', 10)?.map((hit) => hit.seq)).toEqual([3, 9])
+  })
+
+  it('does not claim a store whose rows predate the count', async () => {
+    // A store written before `event_fts_state` existed has rows the count never
+    // saw. `base` is non-zero there, so an append must not stamp it as covered:
+    // the rebuild has to happen once, and that rebuild is what starts recording.
+    const store = await seededStore()
+    const raw = store as unknown as {
+      statement: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown }
+    }
+    raw.statement('DELETE FROM event_fts_state').run()
+    raw.statement('DELETE FROM event_fts').run()
+    store.appendBatch(headerOf('session-search'), turn(12, 3, '第三轮排位赛', '第三轮 ENOSPC'), true, 0)
+
+    expect(raw.statement('SELECT built_rows FROM event_fts_state WHERE singleton = 1').get()).toBeUndefined()
+    // Only the two English replies mention ENOSPC (seqs 9 and 15); the rebuild
+    // has to recover the one written before the index was emptied.
+    expect(
+      store
+        .searchHits(matchQueryFor('ENOSPC') ?? '', 10)
+        ?.map((hit) => hit.seq)
+        .sort((left, right) => left - right),
+    ).toEqual([9, 15])
+    expect(Number((raw.statement('SELECT built_rows FROM event_fts_state WHERE singleton = 1').get() as { built_rows: unknown }).built_rows)).toBe(18)
+  })
+
   it('builds the index for a store written before it existed', async () => {
     const store = await seededStore()
     // Emulate an older store: forget the covered row count and the index rows.
