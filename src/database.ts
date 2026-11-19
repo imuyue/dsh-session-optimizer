@@ -127,6 +127,21 @@ export interface LoadedSession {
   readonly path: string
 }
 
+/**
+ * What one `wal_checkpoint` call managed to fold.
+ *
+ * `checkpointed < log` is the only state that matters to a caller about to move
+ * the file: those frames live in `-wal` alone, and `rename` does not carry it.
+ */
+export interface WriteAheadLogFold {
+  /** Non-zero when a reader held the log open and the fold could not finish. */
+  readonly busy: number
+  /** Frames in the log, or `-1` when the database has no write-ahead log. */
+  readonly log: number
+  /** Frames already copied into the main file. */
+  readonly checkpointed: number
+}
+
 /** A session row without decoding the event log — used by `stat` and `list`. */
 export interface LoadedHeader {
   readonly header: SessionHeader
@@ -1167,6 +1182,7 @@ export class SessionDatabase {
             firstSeq,
             eventCount,
             Buffer.from(chunk.payload as Uint8Array),
+            Number(chunk.raw_bytes),
             // A whole-log read visits every frame once; keeping them would evict
             // the frames the next page needs without ever being hit again.
             false,
@@ -1236,7 +1252,7 @@ export class SessionDatabase {
         // cannot be cut), but parsing is per row: only the part the page reads is
         // parsed. The unpack is shared with the next page through the cache, so a
         // page that ends mid-frame costs the next page nothing.
-        const lines = this.frameLines(firstSeq, eventCount, payload)
+        const lines = this.frameLines(firstSeq, eventCount, payload, Number(chunk.raw_bytes))
         events.push(...decodeChunkRange(lines, { firstSeq }, from, Math.min(to, firstSeq + eventCount)))
       }
     }
@@ -1279,12 +1295,13 @@ export class SessionDatabase {
     firstSeq: number,
     eventCount: number,
     payload: Buffer,
+    rawBytes?: number,
     keep = true,
   ): readonly string[] {
     const key = `${this.framePrefix}${String(firstSeq)}:${String(eventCount)}`
     const cached = this.frames.get(key)
     if (cached !== undefined) return cached
-    const lines = this.decodeFrameLines(payload, firstSeq, eventCount)
+    const lines = this.decodeFrameLines(payload, firstSeq, eventCount, rawBytes)
     if (keep) this.frames.set(key, lines, residentBytes(lines))
     return lines
   }
@@ -1298,9 +1315,9 @@ export class SessionDatabase {
    * shows "damaged" instead of a generic failure, and a salvage run is the
    * obvious next step.
    */
-  private decodeFrameLines(payload: Buffer, firstSeq: number, eventCount: number): string[] {
+  private decodeFrameLines(payload: Buffer, firstSeq: number, eventCount: number, rawBytes?: number): string[] {
     try {
-      return decodeChunkLines(payload, { firstSeq, eventCount })
+      return decodeChunkLines(payload, { firstSeq, eventCount, rawBytes })
     } catch (error) {
       throw new SessionPersistenceCorruptionError(
         `the event frame at seq ${String(firstSeq)} in "${this.path}" cannot be decoded: ${String(error)}`,
@@ -1400,13 +1417,14 @@ export class SessionDatabase {
   private *storedEventLines(): Generator<string> {
     if (this.chunks) {
       const frames = this.statement(
-        'SELECT first_seq, event_count, payload FROM event_chunk ORDER BY first_seq',
-      ).all() as unknown as Array<{ first_seq: unknown; event_count: unknown; payload: Uint8Array }>
+        'SELECT first_seq, event_count, raw_bytes, payload FROM event_chunk ORDER BY first_seq',
+      ).all() as unknown as Array<{ first_seq: unknown; event_count: unknown; raw_bytes: unknown; payload: Uint8Array }>
       for (const frame of frames) {
         for (const line of this.decodeFrameLines(
           frame.payload as Buffer,
           Number(frame.first_seq),
           Number(frame.event_count),
+          Number(frame.raw_bytes),
         )) {
           yield line
         }
@@ -1459,16 +1477,17 @@ export class SessionDatabase {
   readEventAt(seq: number): SessionEvent | undefined {
     if (this.chunks) {
       const frame = this.statement(
-        `SELECT first_seq, event_count, payload FROM event_chunk
+        `SELECT first_seq, event_count, raw_bytes, payload FROM event_chunk
           WHERE first_seq <= ? AND last_seq >= ? ORDER BY first_seq DESC LIMIT 1`,
       ).get(seq, seq) as unknown as
-        | { first_seq: unknown; event_count: unknown; payload: Uint8Array }
+        | { first_seq: unknown; event_count: unknown; raw_bytes: unknown; payload: Uint8Array }
         | undefined
       if (frame !== undefined) {
         const lines = this.decodeFrameLines(
           frame.payload as Buffer,
           Number(frame.first_seq),
           Number(frame.event_count),
+          Number(frame.raw_bytes),
         )
         const line = lines[seq - Number(frame.first_seq)]
         return line === undefined ? undefined : (JSON.parse(line) as SessionEvent)
@@ -1955,6 +1974,38 @@ export class SessionDatabase {
     }
   }
 
+  /**
+   * Give back every free page, for an operator who asked.
+   *
+   * `compact()` only reclaims the bytes the seal it just ran actually freed, and
+   * a store whose tail is already under half a frame returns before that. Free
+   * pages left by an earlier truncation then stay in the file forever: measured
+   * across a real root, that was about 93MB that no write path would touch.
+   * This is not on the append path. It reports how many free pages it found and
+   * how many remain, so the caller can say whether the file shrank.
+   */
+  reclaimFreePages(): { readonly before: number; readonly after: number } {
+    const before = readPragma(this.db, 'freelist_count')
+    if (before <= 0) return { before, after: before }
+    if (readPragma(this.db, 'auto_vacuum') === 0) {
+      try {
+        this.db.exec('PRAGMA auto_vacuum = INCREMENTAL')
+        this.db.exec('VACUUM')
+      } catch {
+        return { before, after: readPragma(this.db, 'freelist_count') }
+      }
+      return { before, after: readPragma(this.db, 'freelist_count') }
+    }
+    // Chunk the reclaim. One statement that covers the whole freelist spills
+    // its pages into the WAL once the working set exceeds the page cache, and
+    // on a 40k-page store that spill is larger than the space being returned.
+    const step = 1000
+    for (let left = before; left > 0; left -= step) {
+      this.db.exec(`PRAGMA incremental_vacuum(${String(Math.min(step, left))})`)
+    }
+    return { before, after: readPragma(this.db, 'freelist_count') }
+  }
+
   private readSessionRow(): SessionRow | undefined {
     const row = this.statement(
       `SELECT session_id, header_json, inherited_event_count, event_count, revision, state, updated_at_ms
@@ -2286,6 +2337,7 @@ export class SessionDatabase {
             firstSeq,
             eventCount,
             Buffer.from(chunk.payload as Uint8Array),
+            Number(chunk.raw_bytes),
             // A whole-log read visits each frame once, so caching it can only
             // evict the frames the next page needs.
             false,
@@ -2554,8 +2606,47 @@ export class SessionDatabase {
    * Needed before a store is moved: `rename` carries only the main file, so a
    * tail still sitting in `-wal` would be lost (and the side car left behind
    * would then be replayed against whatever file took the name).
+   *
+   * The triple is the whole point. A reader holding a snapshot pins the log, and
+   * `wal_checkpoint` answers `busy=1` with `checkpointed` well below `log` rather
+   * than failing — the frames it could not copy exist only in `-wal`. `exec`
+   * throws that answer away, so the caller used to treat a refused fold as a
+   * finished one and publish a main file that had lost those events.
    */
-  checkpoint(): void {
-    this.db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+  checkpoint(mode: 'TRUNCATE' | 'FULL' | 'PASSIVE' = 'TRUNCATE'): WriteAheadLogFold {
+    const row = this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get() as
+      | Record<string, unknown>
+      | undefined
+    return {
+      busy: Number(row?.['busy'] ?? 0),
+      // `-1` is what SQLite reports when the database has no write-ahead log at
+      // all (a `journal_mode=DELETE` store), which is the fully folded case.
+      log: Number(row?.['log'] ?? -1),
+      checkpointed: Number(row?.['checkpointed'] ?? -1),
+    }
+  }
+
+  /**
+   * What `PRAGMA quick_check` objects to, as text lines; empty means satisfied.
+   *
+   * Everything the read path does is self-consistent: a damaged page makes the
+   * lookups that cover it come back short, which reads exactly like a store that
+   * was torn at the tail and truncates cleanly — `state` stays `ready` and the
+   * events simply end early. SQLite is the only one that can tell the difference,
+   * so a diagnostic has to ask it.
+   */
+  integrityProblems(): string[] {
+    try {
+      const rows = this.db.prepare('PRAGMA quick_check').all() as Array<Record<string, unknown>>
+      return rows
+        .map(row => String(Object.values(row)[0] ?? ''))
+        .filter(text => text !== '' && text !== 'ok')
+    } catch (error) {
+      // `quick_check` normally returns its findings as rows, but damage it cannot
+      // even walk raises `SQLITE_CORRUPT` at the statement instead. That is the
+      // same answer in a different shape, and a diagnostic that reported "no
+      // problems" because the check crashed would be worse than no check.
+      return [`quick_check failed: ${error instanceof Error ? error.message : String(error)}`]
+    }
   }
 }

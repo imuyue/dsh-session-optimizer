@@ -15,10 +15,11 @@ Usage: dsh-session-optimizer <command> [options]
   verify           Compare the SQLite copy against the JSONL original
   uninstall-check  List sessions that exist only in SQLite (unsafe to uninstall)
   upgrade          Move stores to this build's layout version
+  compact          Seal the tail and give back free pages
 
   --from <dir>     Source root (JSONL root for import/verify, SQLite root for export)
   --to <dir>       Target root (SQLite root for import, JSONL root for export)
-  --root <dir>     SQLite root (uninstall-check, upgrade)
+  --root <dir>     SQLite root (uninstall-check, upgrade, compact)
   --jsonl <dir>    JSONL root (uninstall-check)
   --session <id>   Only this session (default: every session in the source)
   --force          Replace an existing target session
@@ -68,3 +69,12 @@ dsh-session-optimizer upgrade --root ~/.dsh/sessions-sqlite
 ```
 
 `upgrade` moves stores to the layout version this build writes, inside one `BEGIN IMMEDIATE` transaction per session; it is the only operation besides `compact()` that raises `user_version`.
+
+## Reclaiming free pages
+
+```bash
+dsh-session-optimizer compact --root ~/.dsh/sessions-sqlite
+dsh-session-optimizer compact --root ~/.dsh/sessions-sqlite --session <sessionId>
+```
+
+`compact` seals any tail still worth a frame, then gives back every free page. The `compact()` that runs on the append path only reclaims the pages that seal just freed, and a store whose tail is already under half a frame returns before that — so pages left by a truncation stay in the file. This command is not on the append path. It reclaims in batches of 1000 pages so one statement does not spill its working set into the WAL.

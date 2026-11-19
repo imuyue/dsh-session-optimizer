@@ -34,11 +34,11 @@ import {
   type SessionId,
 } from '@deepseek-ai/dsh-session'
 import { SessionPersistence, SessionPersistenceCorruptionError } from '@deepseek-ai/dsh-session-persistence'
-import { SessionDatabase, ensureSessionDirectory, type LoadedHeader, type SqliteSettings } from './database.ts'
+import { SessionDatabase, ensureSessionDirectory, type LoadedHeader, type SqliteSettings, type WriteAheadLogFold } from './database.ts'
 import { databasePath, decodeSegment, encodeSegment, sessionDir } from './format.ts'
 import { SessionWriteLease } from './lease.ts'
 import { scanSessions } from './storage.ts'
-import { holdStore, withStoreHeld } from './store-lease.ts'
+import { holdStore, sleep, withStoreHeld } from './store-lease.ts'
 
 /** Import writes no WAL sidecars: a published session is one self-contained file. */
 export const IMPORT_SETTINGS: SqliteSettings = {
@@ -55,6 +55,19 @@ export const READ_SETTINGS: SqliteSettings = {
 }
 
 const DATABASE_SUFFIXES = ['', '-wal', '-shm', '-journal'] as const
+
+/**
+ * How long a publish waits for a reader to let go of the write-ahead log.
+ *
+ * A reader pins the log for as long as it holds a statement open, which for the
+ * console is milliseconds — but a reader in another process can hold one for as
+ * long as its query runs. Two seconds covers the first and gives up on the
+ * second, which is the point: a store that cannot be folded must not be moved.
+ */
+const CHECKPOINT_BUDGET_MS = 2_000
+
+/** Gap between fold attempts; SQLite needs the reader's transaction to end. */
+const CHECKPOINT_RETRY_MS = 25
 
 export type TransferDirection = 'jsonl_to_sqlite' | 'sqlite_to_jsonl'
 
@@ -1115,9 +1128,34 @@ async function checkpointDatabase(path: string): Promise<void> {
   let db: SessionDatabase | undefined
   try {
     db = SessionDatabase.open(path, READ_SETTINGS)
-    db.checkpoint()
+    const fold = await foldWriteAheadLog(db)
+    if (fold !== undefined) {
+      throw new Error(
+        `"${path}" kept ${fold.log - fold.checkpointed} of ${fold.log} event(s) in its write-ahead log `
+        + `because a reader held it open for ${CHECKPOINT_BUDGET_MS}ms, so publishing it now would drop them`,
+      )
+    }
   } finally {
     db?.close()
+  }
+}
+
+/**
+ * Retry the fold until every frame is in the main file.
+ *
+ * Returns the last attempt when the budget runs out, `undefined` when the main
+ * file is self-contained. `wal_checkpoint` does not fail when a reader holds the
+ * log open — it answers `busy=1` and copies nothing, which is why the triple has
+ * to be read instead of the call treated as done. No mode does better while the
+ * reader is there, so once the budget is spent the only honest answer is to stop.
+ */
+async function foldWriteAheadLog(db: SessionDatabase): Promise<WriteAheadLogFold | undefined> {
+  const deadline = Date.now() + CHECKPOINT_BUDGET_MS
+  for (;;) {
+    const fold = db.checkpoint('TRUNCATE')
+    if (fold.checkpointed >= fold.log) return undefined
+    if (Date.now() >= deadline) return fold
+    await sleep(CHECKPOINT_RETRY_MS)
   }
 }
 

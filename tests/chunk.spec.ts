@@ -15,11 +15,12 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { constants as zlibConstants, zstdCompressSync } from 'node:zlib'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import { SessionDatabase, ensureSessionDirectory, type SqliteSettings } from '../src/database.ts'
-import { CHUNK_BYTES } from '../src/chunk.ts'
+import { CHUNK_BYTES, decodeChunkLines, encodeChunk } from '../src/chunk.ts'
 import { databasePath } from '../src/format.ts'
 
 const SETTINGS: SqliteSettings = { journalMode: 'wal', synchronous: 'full', busyTimeoutMs: 5000 }
@@ -271,6 +272,26 @@ describe('chunked log', () => {
     } finally {
       store.close()
     }
+  })
+
+  it('refuses a frame that expands past the size it claims', () => {
+    const honest = encodeChunk(longLog(1, 200))
+    expect(honest).toBeDefined()
+    const bomb = 'x'.repeat(8 * 1024 * 1024)
+    const payload = zstdCompressSync(Buffer.from(bomb), {
+      params: { [zlibConstants.ZSTD_c_compressionLevel]: 9 },
+    })
+    expect(payload.byteLength).toBeLessThan(honest!.rawBytes)
+    expect(() => decodeChunkLines(payload, {
+      firstSeq: honest!.firstSeq,
+      eventCount: honest!.eventCount,
+      rawBytes: honest!.rawBytes,
+    })).toThrow(/too large|maxOutputLength|cannot be decoded|ERR_BUFFER_TOO_LARGE|larger than/i)
+    expect(decodeChunkLines(honest!.payload, {
+      firstSeq: honest!.firstSeq,
+      eventCount: honest!.eventCount,
+      rawBytes: honest!.rawBytes,
+    })).toHaveLength(honest!.eventCount)
   })
 
   it('keeps a short log as rows and leaves a pre-frame store readable', async () => {

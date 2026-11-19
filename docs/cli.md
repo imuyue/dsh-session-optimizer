@@ -15,10 +15,11 @@ Usage: dsh-session-optimizer <command> [options]
   verify           对比 SQLite 副本与 JSONL 原件
   uninstall-check  列出只存在于 SQLite 的会话（此时卸载不安全）
   upgrade          把存储升级到本构建的布局版本
+  compact          封口尾部并交还空闲页
 
   --from <dir>     源根（import/verify 为 JSONL 根，export 为 SQLite 根）
   --to <dir>       目标根（import 为 SQLite 根，export 为 JSONL 根）
-  --root <dir>     SQLite 根（uninstall-check、upgrade）
+  --root <dir>     SQLite 根（uninstall-check、upgrade、compact）
   --jsonl <dir>    JSONL 根（uninstall-check）
   --session <id>   只处理这个会话（默认：源根内全部会话）
   --force          覆盖已存在的目标会话
@@ -68,3 +69,12 @@ dsh-session-optimizer upgrade --root ~/.dsh/sessions-sqlite
 ```
 
 `upgrade` 把存储迁移到本构建写入的布局版本，每个会话一个 `BEGIN IMMEDIATE` 事务；它是除 `compact()` 之外唯一会提升 `user_version` 的操作。
+
+## 回收空页
+
+```bash
+dsh-session-optimizer compact --root ~/.dsh/sessions-sqlite
+dsh-session-optimizer compact --root ~/.dsh/sessions-sqlite --session <sessionId>
+```
+
+`compact` 先封口还值得成帧的尾部，再把空闲页交还。写入路径上的 `compact()` 只回收它自己刚腾出的页，尾部已经小于半帧的库会直接返回，截断留下的空洞就一直占着文件。这条命令不在追加路径上，按每 1000 页一批做 `incremental_vacuum`，避免一次语句把工作集溢出到 WAL。

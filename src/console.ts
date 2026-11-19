@@ -24,7 +24,8 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { overlappingDirectories } from './path-identity.ts'
+import { resolve } from 'node:path'
+import { overlappingDirectories, sameDirectory } from './path-identity.ts'
 import type { WorkspaceMembershipSnapshot } from './migration-workspace.ts'
 import type { PluginAbout } from './about.ts'
 import { checkForUpdate } from './update.ts'
@@ -212,6 +213,47 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     transport.fetch.register({ path: `${CONSOLE_ROUTE_PREFIX}${path}`, methods, requestBody: 'buffered', fetch })
   }
 
+  /** Filled on first use; see `permittedRoots`. */
+  let permitted: Promise<string[]> | undefined
+
+  /**
+   * Every root these routes are allowed to act on.
+   *
+   * The picker only ever offers what `/roots` found, so a request naming anything
+   * else is not a choice the panel can make — it is the routes being used as a
+   * file browser over the whole disk. `/source` would list it and `/migrate`
+   * would rewrite it, both under the operator's own privileges. The set is
+   * therefore exactly "what discovery offers, plus what this mount was configured
+   * with": the configured roots stay in even when a walk cannot see them yet,
+   * because they are where the next session is going to land.
+   */
+  const permittedRoots = (): Promise<string[]> => {
+    // Discovery walks the disk, so it is asked once per mount: the roots a profile
+    // offers do not change while the console is registered, and `/titles` is read
+    // on every keystroke of the picker's search box.
+    permitted ??= (async () => {
+      const found = await discoverRoots({ sqliteRoot: config.root, jsonlRoot: config.jsonlRoot })
+      const paths = new Set<string>([resolve(config.root)])
+      if (config.jsonlRoot !== undefined && config.jsonlRoot !== '') paths.add(resolve(config.jsonlRoot))
+      for (const candidate of found) paths.add(resolve(candidate.path))
+      return [...paths]
+    })()
+    return permitted
+  }
+
+  /** `undefined` when the root is one of ours, else the refusal to return. */
+  const rootRefusal = async (root: string): Promise<Response | undefined> => {
+    for (const allowed of await permittedRoots()) {
+      // `sameDirectory` covers the aliases a plain comparison misses: a junction,
+      // a symlink, or the same volume reached through different casing.
+      if (resolve(allowed) === resolve(root) || await sameDirectory(allowed, root)) return undefined
+    }
+    return failure(
+      `"${root}" is not a session root this machine offers; ${CONSOLE_ROUTE_PREFIX}/roots lists the ones it does`,
+      400,
+    )
+  }
+
   // One question, one answer: what is in this root and is it healthy. The panel
   // shows it as four totals, a space-usage table and the pragmas in force.
   register('/overview', ['GET'], async (request) => {
@@ -238,6 +280,8 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     } catch { return failure('invalid title identities', 400) }
     const root = params.get('root') || config.jsonlRoot
     if (root === undefined) return failure('this mount has no JSONL root', 400)
+    const refused = await rootRefusal(root)
+    if (refused !== undefined) return refused
     try {
       const titles = await pickerTitles(root, new Set(ids), request.signal)
       return json({ titles: ids.map(id => { const value = titles.get(id); return value === undefined ? { id, removed: true, titlePending: false } : { id, ...value, titlePending: false } }) })
@@ -313,6 +357,8 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     const backend = params.get('backend') === 'sqlite' ? 'sqlite' : 'jsonl'
     const root = params.get('root')
     if (root === null || root === '') return failure('the root parameter is required', 400)
+    const refused = await rootRefusal(root)
+    if (refused !== undefined) return refused
     const parent = params.get('parent')
     if (parent !== null && (parent.length === 0 || parent.length > 256)) return failure('invalid parent session id', 400)
     const offset = numberParam(params.get('offset'))
@@ -395,6 +441,10 @@ export function registerConsole(ctx: Context, config: ConsoleConfig): void {
     }
     if (await overlappingDirectories(jsonlRoot, sqliteRoot)) {
       return failure('the JSONL and SQLite roots are the same directory or contain one another', 400)
+    }
+    for (const root of jsonlRoot === sqliteRoot ? [jsonlRoot] : [jsonlRoot, sqliteRoot]) {
+      const refused = await rootRefusal(root)
+      if (refused !== undefined) return refused
     }
     const sessions = stringListField(body, 'sessions')
     const options: MigrationOptions = {

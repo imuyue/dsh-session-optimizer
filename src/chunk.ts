@@ -112,21 +112,42 @@ export function encodeChunk(events: readonly SessionEvent[]): EncodedChunk | und
 }
 
 /**
+ * How far a frame may expand past the size it claims.
+ *
+ * A sealed frame's `rawBytes` is the exact uncompressed length the writer
+ * measured. A payload that expands past that claim is not a legal frame: zstd
+ * still has to walk the whole input, but `maxOutputLength` stops the output
+ * from being allocated. The slack is one byte per line plus a small constant,
+ * because a frame that was encoded before this ceiling existed can disagree
+ * with a later length check by a trailing newline and nothing else.
+ */
+const DECODE_SLACK_BYTES = 64
+
+/**
  * Unpack one chunk into its JSON lines, without parsing them.
  *
- * Decompression cannot be narrowed — zstd has to run over the whole frame — but
- * parsing can. A 500-event frame feeding a 50-event page otherwise parses ten
- * times more rows than the caller reads, and on the 47k-event sample that parse
- * was 1.1ms of a 5ms cold page read.
+ * Decompression cannot be narrowed to a byte range — zstd has to run over the
+ * whole frame — but it can be bounded. Without a ceiling a frame whose
+ * redundant `raw_bytes` was left honest while its payload was swapped for a
+ * highly compressible bomb allocates the expanded output before any length
+ * check runs. The ceiling is the size the frame claims, plus a little slack
+ * so a legitimate frame is never refused for an off-by-newline.
+ *
+ * Parsing can still be narrowed after this. A 500-event frame feeding a
+ * 50-event page otherwise parses ten times more rows than the caller reads,
+ * and on the 47k-event sample that parse was 1.1ms of a 5ms cold page read.
  *
  * The event count is still checked here: it comes from the redundant columns and
  * a frame that disagrees with them is damaged, not short.
  */
 export function decodeChunkLines(
   payload: Buffer,
-  expected: { readonly firstSeq: number; readonly eventCount: number },
+  expected: { readonly firstSeq: number; readonly eventCount: number; readonly rawBytes?: number },
 ): string[] {
-  const lines = zstdDecompressSync(payload).toString('utf8').split('\n')
+  const ceiling = expected.rawBytes === undefined
+    ? undefined
+    : expected.rawBytes + expected.eventCount + DECODE_SLACK_BYTES
+  const lines = zstdDecompressSync(payload, ceiling === undefined ? {} : { maxOutputLength: ceiling }).toString('utf8').split('\n')
   if (lines.length !== expected.eventCount) {
     throw new Error(
       `chunk starting at seq ${String(expected.firstSeq)} holds ${String(lines.length)} events, expected ${String(expected.eventCount)}`,

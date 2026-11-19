@@ -14,6 +14,7 @@
  * - `verify --from <jsonlRoot> --to <sqliteRoot> [--session id]`
  * - `uninstall-check --root <sqliteRoot> --jsonl <jsonlRoot>`
  * - `upgrade --root <sqliteRoot> [--session id]`
+ * - `compact --root <sqliteRoot> [--session id]`
  *
  * `verify`, `export` and `uninstall-check` are diagnostics: a damaged store is
  * reported per item and never aborts the whole run, because the store that
@@ -49,11 +50,12 @@ Commands:
   verify           Compare the SQLite copy against the JSONL original
   uninstall-check  List sessions that exist only in SQLite (unsafe to uninstall)
   upgrade          Move stores to this build's layout version
+  compact          Seal the tail and give back free pages
 
 Options:
   --from <dir>     Source root (JSONL root for import/verify, SQLite root for export)
   --to <dir>       Target root (SQLite root for import, JSONL root for export)
-  --root <dir>     SQLite root (uninstall-check, upgrade)
+  --root <dir>     SQLite root (uninstall-check, upgrade, compact)
   --jsonl <dir>    JSONL root (uninstall-check)
   --session <id>   Only this session (default: every session in the source)
   --force          Replace an existing target session
@@ -118,6 +120,7 @@ interface Report {
   readonly orphaned?: readonly string[]
   readonly upgraded?: readonly string[]
   readonly current?: readonly string[]
+  readonly compacted?: readonly string[]
   readonly ok: boolean
 }
 
@@ -160,6 +163,25 @@ async function commandExport(options: Options): Promise<Report> {
 }
 
 /**
+ * What SQLite itself objects to in one store, as text lines.
+ *
+ * A store that cannot be opened at all is reported the same way rather than
+ * thrown: `verify` exists to enumerate problems, and one unreadable file must not
+ * hide the state of the other hundred.
+ */
+async function damageOf(path: string): Promise<string[]> {
+  let store: SessionDatabase | undefined
+  try {
+    store = SessionDatabase.open(path, { ...INTEGRITY_SETTINGS })
+    return store.integrityProblems()
+  } catch (error) {
+    return [`quick_check could not run: ${error instanceof Error ? error.message : String(error)}`]
+  } finally {
+    store?.close()
+  }
+}
+
+/**
  * Compare every store under the SQLite root against its JSONL original.
  *
  * A store that cannot be read becomes one difference rather than an exception:
@@ -174,6 +196,17 @@ async function commandVerify(options: Options): Promise<Report> {
   const skipped: string[] = []
   const seen = new Set<string>()
   for (const entry of entries) {
+    // Asked before the comparison, because the comparison cannot see this: a
+    // damaged page makes the queries covering it come back short, which is
+    // exactly what a store torn at the tail looks like. Both logs then agree on
+    // the shorter prefix and the store passes a check it should fail.
+    const damage = await damageOf(entry.path)
+    if (damage.length > 0) {
+      differences.push({
+        session: entry.directory,
+        detail: `SQLite reports damage: ${damage.slice(0, 3).join('; ')}`,
+      })
+    }
     let copy
     try {
       copy = await readSqliteCopy(entry.path, 'strict', { ...DEFAULT_TRANSFER_OPTIONS, readOnlySources: true })
@@ -264,6 +297,20 @@ const UPGRADE_SETTINGS: SqliteSettings = {
 }
 
 /**
+ * Settings for asking SQLite about a store without touching it.
+ *
+ * `readOnly` is what keeps a diagnostic from being a repair: the open path
+ * upgrades a store it finds on an older layout, and a check that silently
+ * rewrites what it was asked to inspect is not a check.
+ */
+const INTEGRITY_SETTINGS: SqliteSettings = {
+  readOnly: true,
+  journalMode: 'wal',
+  synchronous: 'full',
+  busyTimeoutMs: 5000,
+}
+
+/**
  * Move stores to this build's layout, and say which ones moved.
  *
  * Opening a store for writing already upgrades it, so this command is a way to
@@ -325,6 +372,58 @@ async function commandUpgrade(options: Options): Promise<Report> {
   }
 }
 
+/**
+ * Seal whatever tail is worth a frame, then give back every free page.
+ *
+ * Sealing and reclaiming are separate on purpose. A store whose tail is already
+ * under half a frame has nothing to seal, and that is exactly the store whose
+ * free pages `compact()` used to leave behind. The report names both results so
+ * an operator can tell "already tight" from "I got the pages back".
+ */
+async function commandCompact(options: Options): Promise<Report> {
+  const root = requireRoot(options.root, '--root')
+  const targets: { path: string; label: string }[] = []
+  if (options.session === undefined) {
+    for (const entry of await scanSessions(root)) {
+      targets.push({ path: entry.path, label: entry.directory })
+    }
+  } else {
+    const path = await findDatabasePath(root, options.session as never)
+    if (path === undefined) {
+      return {
+        command: 'compact',
+        compacted: [],
+        failed: [`${options.session}: not present in this root`],
+        ok: false,
+      }
+    }
+    targets.push({ path, label: options.session })
+  }
+  const compacted: string[] = []
+  const failed: string[] = []
+  for (const target of targets) {
+    let store: SessionDatabase
+    try {
+      store = SessionDatabase.open(target.path, UPGRADE_SETTINGS)
+    } catch (error) {
+      failed.push(`${target.label}: ${error instanceof Error ? error.message : String(error)}`)
+      continue
+    }
+    try {
+      store.compact()
+      const reclaimed = store.reclaimFreePages()
+      compacted.push(
+        `${target.label}: freed ${String(reclaimed.before - reclaimed.after)} pages, ${String(reclaimed.after)} still free`,
+      )
+    } catch (error) {
+      failed.push(`${target.label}: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      store.close()
+    }
+  }
+  return { command: 'compact', compacted, failed, ok: failed.length === 0 }
+}
+
 /* ------------------------------------------------------------------ entry */
 
 /** Run one command; exported so tests drive the CLI without a process. */
@@ -362,6 +461,11 @@ export async function run(argv: readonly string[]): Promise<number> {
         emit(report, options.json)
         return report.ok ? 0 : 1
       }
+      case 'compact': {
+        const report = await commandCompact(options)
+        emit(report, options.json)
+        return report.ok ? 0 : 1
+      }
       default:
         process.stderr.write(`unknown command "${options.command}"\n\n${USAGE}`)
         return 2
@@ -394,6 +498,7 @@ function emit(report: Report, json: boolean): void {
   }
   for (const id of report.upgraded ?? []) lines.push(`upgraded ${id}`)
   for (const id of report.current ?? []) lines.push(`current ${id}`)
+  for (const note of report.compacted ?? []) lines.push(`compacted ${note}`)
   for (const id of report.orphaned ?? []) {
     lines.push(`ORPHAN ${id}: exists only in SQLite; export it before uninstalling`)
   }
