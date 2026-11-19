@@ -141,7 +141,7 @@ const DECODE_SLACK_BYTES = 64
  * a frame that disagrees with them is damaged, not short.
  */
 export function decodeChunkLines(
-  payload: Buffer,
+  payload: Uint8Array,
   expected: { readonly firstSeq: number; readonly eventCount: number; readonly rawBytes?: number },
 ): string[] {
   const ceiling = expected.rawBytes === undefined
@@ -164,7 +164,7 @@ export function decodeChunkLines(
  * what it claims is reported as a length mismatch rather than served short.
  */
 export function decodeChunk(
-  payload: Buffer,
+  payload: Uint8Array,
   expected: { readonly firstSeq: number; readonly eventCount: number },
 ): SessionEvent[] {
   const lines = decodeChunkLines(payload, expected)

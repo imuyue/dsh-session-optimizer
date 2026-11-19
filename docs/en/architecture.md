@@ -100,7 +100,7 @@ One writer per session, taken with `flock` on `session.lock`. Failing to take it
 
 ## Frame cache and warmup
 
-Decompressed chunks live in an 8 MiB byte-LRU (`src/lru.ts`). Any write clears the cache (reseal, compact, truncateTail). With 8 chunks resident, a 95-page backfill needed 269 decodes instead of 445 (951 ms → 637 ms).
+Decompressed chunks live in an 8 MiB byte-LRU (`src/lru.ts`). Any write clears the cache (reseal, compact, truncateTail). With 8 chunks resident, a 95-page backfill needed 269 decodes instead of 445 (951 ms → 637 ms). A whole-log read takes its pages as `'lines'` — the page is handed over as strings, which skips the join/encode/transfer/decode/split round trip — while `readPage` still answers in the negotiated format.
 
 `warmupSessions` (default 5) preloads the tail of the most recent sessions after mount and builds their search index: the first tail window drops from 6.1 ms to 1.0 ms, and the first search on an old database drops from 5.7 s to about 50 ms. Warmup has a 30 s budget and stays quiet on failure.
 

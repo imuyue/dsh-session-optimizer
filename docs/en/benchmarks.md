@@ -81,6 +81,17 @@ Per-event rows store the same JSON plus a row id and a type, so they are larger 
 
 With 8 chunks resident in the frame cache, the same 95-page backfill needs 269 decodes instead of 445 and drops from 951 ms to 637 ms.
 
+A **whole-log** read also paid for the page transfer format. Each page was cut into strings inside the worker, joined back into one string, encoded with `TextEncoder`, transferred, decoded with `TextDecoder` and split again — that round trip was 405 ms of a 1296 ms read on the 47k-event sample. A whole log now asks for `'lines'` and hands the pages over as the strings the caller is about to parse; `zstdDecompressSync` also takes the `Uint8Array` directly instead of being handed a copy of every payload. The public `readPage` still answers in the negotiated format, because a client may drive the pages itself.
+
+| Environment | Before (bytes) | After (lines) | Change |
+| --- | --- | --- | --- |
+| Host · 56,537 events · 83.9 MB | 1428–1691 ms | 962–983 ms | −32.6% |
+| Host · synthetic 20,000 events | 265–274 ms | 182–194 ms | −31.3% |
+| vm_linux · 2 vCPU · synthetic 20,000 | 239–317 ms | 145–166 ms | −39.3% |
+| vm_windows · synthetic 20,000 | 275–304 ms | 203–219 ms | −26.2% |
+
+All four return byte-identical events: `repro/52-s1-s2-verify.mjs` sha256s every event against the row-by-row read, not just the count.
+
 ## Python reproduction
 
 ```bash

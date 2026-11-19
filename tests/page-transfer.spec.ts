@@ -92,6 +92,19 @@ describe('raw JSON page wire', () => {
     expect((await exec.loadSessionPaged(f.path, SETTINGS))?.events).toEqual(f.events)
   })
 
+  it('asks for lines on a whole-log read even while the negotiated format is bytes', async () => {
+    const f = await fixture(300, true)
+    const spy = vi.spyOn(SessionDatabase.prototype, 'readPageBytes')
+    const exec = new InlineExecutor(1)
+    cleanup.push(() => exec.close())
+    const loaded = await exec.loadSessionPaged(f.path, SETTINGS)
+    expect(loaded?.events).toEqual(f.events)
+    expect(spy.mock.calls.length).toBeGreaterThan(0)
+    expect(spy.mock.calls.map(call => call[2])).toEqual(spy.mock.calls.map(() => 'lines'))
+    // The negotiated format still governs the door a client drives itself.
+    expect((await exec.readPage(f.path, SETTINGS, 0, 6))?.format).not.toBe('lines')
+  })
+
   it.each([
     { name: 'missing', page: undefined },
     { name: 'wrong sequence', page: { firstSeq: 1, count: 6, format: 'lines', lines: [] } },

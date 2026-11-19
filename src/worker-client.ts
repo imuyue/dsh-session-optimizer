@@ -22,7 +22,7 @@ import type { LoadedHeader, LoadedSession, LogPage, SqliteSettings } from './dat
 import { fromWireError, toWireError, type WireRequest, type WireResponse } from './rpc.ts'
 import { PAGED_MIN_EVENTS, assemblePaged, type HeaderBatchEntry, type StorageExecutor } from './executor.ts'
 import type { SearchHitRow } from './database.ts'
-import { currentPageTransferFormat } from './page-transfer.ts'
+import { currentPageTransferFormat, type PageTransferFormat } from './page-transfer.ts'
 import { registerStoreReleaser } from './store-lease.ts'
 
 interface Pending {
@@ -196,15 +196,25 @@ export class WorkerExecutor implements StorageExecutor {
   ): Promise<LoadedSession | undefined> {
     const meta = await this.pagedHeader(path, settings)
     if (meta === undefined || meta.eventCount < PAGED_MIN_EVENTS) return undefined
-    return assemblePaged(path, meta, (from, to) => this.readPage(path, settings, from, to), signal)
+    // Same reasoning as InlineExecutor.loadSessionPaged: a whole log is consumed
+    // as lines, so asking the worker for bytes would only make this thread split
+    // them again. The strings clone across the boundary faster than the 34MB
+    // buffer they were cut from, and nothing is decoded on this side.
+    return assemblePaged(path, meta, (from, to) => this.readPage(path, settings, from, to, 'lines'), signal)
   }
 
   pagedHeader(path: string, settings: SqliteSettings): Promise<LoadedHeader | undefined> {
     return this.call<LoadedHeader | undefined>('pagedHeader', [path, settings])
   }
 
-  readPage(path: string, settings: SqliteSettings, from: number, to: number): Promise<LogPage | undefined> {
-    return this.call<LogPage | undefined>('readPage', [path, settings, from, to, currentPageTransferFormat()])
+  readPage(
+    path: string,
+    settings: SqliteSettings,
+    from: number,
+    to: number,
+    format: PageTransferFormat = currentPageTransferFormat(),
+  ): Promise<LogPage | undefined> {
+    return this.call<LogPage | undefined>('readPage', [path, settings, from, to, format])
   }
 
   trustedLength(path: string, settings: SqliteSettings): Promise<number | undefined> {

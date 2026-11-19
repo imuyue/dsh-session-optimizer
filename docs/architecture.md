@@ -100,7 +100,7 @@ PRAGMA busy_timeout   = 5000
 
 ## 帧缓存与预热
 
-解压后的块进入 8MiB 字节 LRU（`src/lru.ts`）。任何写入都会清空缓存（重封口、分块、`truncateTail`）。8 块常驻时，95 页回溯只需 269 次解码（原 445 次），951ms → 637ms。
+解压后的块进入 8MiB 字节 LRU（`src/lru.ts`）。任何写入都会清空缓存（重封口、分块、`truncateTail`）。8 块常驻时，95 页回溯只需 269 次解码（原 445 次），951ms → 637ms。整段读取按 `'lines'` 取页（页以字符串交出，省掉 join/encode/transfer/decode/split 一整圈），`readPage` 对外仍按协商格式返回。
 
 `warmupSessions`（默认 5）在 mount 后预热最近会话的尾部并补建检索索引：首屏尾窗 6.1ms → 1.0ms，老库首次检索 5.7s → 约 50ms。预热有 30 秒预算，失败保持安静。
 

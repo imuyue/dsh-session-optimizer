@@ -1181,7 +1181,7 @@ export class SessionDatabase {
           const lines = this.frameLines(
             firstSeq,
             eventCount,
-            Buffer.from(chunk.payload as Uint8Array),
+            chunk.payload as Uint8Array,
             Number(chunk.raw_bytes),
             // A whole-log read visits every frame once; keeping them would evict
             // the frames the next page needs without ever being hit again.
@@ -1247,7 +1247,7 @@ export class SessionDatabase {
       }>) {
         const firstSeq = Number(chunk.first_seq)
         const eventCount = Number(chunk.event_count)
-        const payload = Buffer.from(chunk.payload as Uint8Array)
+        const payload = chunk.payload as Uint8Array
         // Decompression has to run over the whole frame either way (a zstd frame
         // cannot be cut), but parsing is per row: only the part the page reads is
         // parsed. The unpack is shared with the next page through the cache, so a
@@ -1294,7 +1294,7 @@ export class SessionDatabase {
   private frameLines(
     firstSeq: number,
     eventCount: number,
-    payload: Buffer,
+    payload: Uint8Array,
     rawBytes?: number,
     keep = true,
   ): readonly string[] {
@@ -1315,7 +1315,7 @@ export class SessionDatabase {
    * shows "damaged" instead of a generic failure, and a salvage run is the
    * obvious next step.
    */
-  private decodeFrameLines(payload: Buffer, firstSeq: number, eventCount: number, rawBytes?: number): string[] {
+  private decodeFrameLines(payload: Uint8Array, firstSeq: number, eventCount: number, rawBytes?: number): string[] {
     try {
       return decodeChunkLines(payload, { firstSeq, eventCount, rawBytes })
     } catch (error) {
@@ -1721,7 +1721,7 @@ export class SessionDatabase {
           event_count: unknown
           payload: unknown
         }>) {
-          const events = decodeChunk(Buffer.from(chunk.payload as Uint8Array), {
+          const events = decodeChunk(chunk.payload as Uint8Array, {
             firstSeq: Number(chunk.first_seq),
             eventCount: Number(chunk.event_count),
           })
@@ -2336,7 +2336,7 @@ export class SessionDatabase {
           const frame = this.frameLines(
             firstSeq,
             eventCount,
-            Buffer.from(chunk.payload as Uint8Array),
+            chunk.payload as Uint8Array,
             Number(chunk.raw_bytes),
             // A whole-log read visits each frame once, so caching it can only
             // evict the frames the next page needs.
@@ -2504,7 +2504,7 @@ export class SessionDatabase {
       for (const chunk of chunks) {
         let events: SessionEvent[]
         try {
-          events = decodeChunk(Buffer.from(chunk.payload as Uint8Array), {
+          events = decodeChunk(chunk.payload as Uint8Array, {
             firstSeq: Number(chunk.first_seq),
             eventCount: Number(chunk.event_count),
           })

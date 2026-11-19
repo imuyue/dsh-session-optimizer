@@ -539,7 +539,15 @@ export class InlineExecutor implements StorageExecutor {
     return assemblePaged(
       path,
       meta,
-      (from, to) => Promise.resolve(store.readPageBytes(from, to, currentPageTransferFormat())),
+      // A whole-log read is consumed as text, so it never travels as bytes. The
+      // page is decoded and split here and handed over as the strings the caller
+      // is about to parse; asking for bytes would add join → encode → transfer →
+      // decode → split on top of that, which measured 405ms of a 1296ms read on
+      // the 47k-event sample. Across a worker boundary the strings also clone
+      // faster than the buffer they were cut from, because the receiving side
+      // would split them again anyway. `readPage` below stays on the negotiated
+      // format, since a client may drive the pages itself.
+      (from, to) => Promise.resolve(store.readPageBytes(from, to, 'lines')),
       signal,
     )
   }

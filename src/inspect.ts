@@ -465,7 +465,7 @@ function titleOf(db: DatabaseSync, metas: readonly ChunkMeta[]): string | undefi
     if (payload === undefined) return undefined
     let events
     try {
-      events = decodeChunk(Buffer.from(payload as Uint8Array), meta)
+      events = decodeChunk(payload as Uint8Array, meta)
     } catch {
       return undefined
     }
