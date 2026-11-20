@@ -83,3 +83,17 @@ python benchmarks/storage_shape_benchmark.py       # re-measures the Python repr
 * The JSONL side is only ever read through the official provider — never by parsing files directly, so both encodings and both layouts stay supported.
 * Documentation describes behaviour and constraints. Design history, milestone tables and personal notes belong in `archive/`, not in `docs/`.
 * One paragraph per source line: Markdown soft-wraps by itself, so a paragraph is never broken by hand. Tables, code fences and list items each start on their own line.
+
+## Release
+
+**Hard rule: no release without a tested update path.** A version that works only on a fresh install is a broken version — it fails exactly the people already running the previous one. Before publishing, run "install the previous version, install this version over it, restart, conversations still land in SQLite" on both Linux and Windows, and keep the commands and their output with the release notes.
+
+Steps, once per machine:
+
+1. Create a profile whose bundles are only `@deepseek-ai/dsh-base`, `@deepseek-ai/dsh-web-app` and this plugin.
+2. `dsh plugin --profile <p> add dsh-session-optimizer@<previous>`, then boot `dsh <p> -- --port <n> --no-open` and confirm the port is listening.
+3. With that process still running, `dsh plugin --profile <p> add <local tgz>` to install over it.
+4. Stop it and boot again: the log must contain neither `did not activate` nor `has been registered`, and `dsh --profile <p> --dump-config` must show `disabled: true` on `session-persistence-jsonl`.
+5. Do one real read and write (a sentence in the web app, or one headless task) and confirm the new store lands under `sessions-sqlite`.
+
+Why the test suite is not enough: it mounts the plugin directly, bypassing profile composition and the loader patch layer, so "did the patch apply" and "in what order do services register" are invisible there — which is how 0.1.31 shipped `service "sessionPersistence" has been registered`. When that residue is what a composition reaches, the plugin now logs an actionable warning and lets the official backend serve instead of failing the profile.

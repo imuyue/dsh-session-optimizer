@@ -83,3 +83,17 @@ python benchmarks/storage_shape_benchmark.py       # 重新测量 Python 复现
 * JSONL 一侧只通过官方 provider 读写，绝不直接解析文件，以同时支持两种编码与两种布局。
 * 文档只描述行为与约束。设计历程、里程碑表格与个人笔记属于 `archive/`，不属于 `docs/`。
 * 一段源码一行：Markdown 自己会软换行，段落不手工折断。表格、围栏代码块与列表项各自独占起行。
+
+## 发布
+
+**铁律：更新路径没有实测通过，就不发版。** 一个只在全新安装下可用的版本是坏版本——它只会让已经在用旧版本的人撞上错误。发布前必须在 linux 与 Windows 上各跑一遍「装上一版 → 覆盖安装这一版 → 重启 → 会话仍写进 SQLite」，并把命令与输出贴进发布记录。
+
+步骤（两台机器各一次）：
+
+1. 建一个只含 `@deepseek-ai/dsh-base`、`@deepseek-ai/dsh-web-app` 与本插件 bundle 的 profile。
+2. `dsh plugin --profile <p> add dsh-session-optimizer@<上一版>`，启动 `dsh <p> -- --port <n> --no-open`，确认端口在听。
+3. 保持进程运行，`dsh plugin --profile <p> add <本地 tgz>` 覆盖安装。
+4. 结束进程后重启，确认启动日志既无 `did not activate` 也无 `has been registered`，且 `dsh --profile <p> --dump-config` 里 `session-persistence-jsonl` 带 `disabled: true`。
+5. 触发一次真实读写（web 里发一句话，或 headless 跑一条任务），确认新库落在 `sessions-sqlite` 下。
+
+为什么测试套件不够：套件直接挂插件，绕过了 profile 组合与 loader 的 patch 层，「patch 是否生效」与「服务注册顺序」这两类问题在测试里看不见——0.1.31 的 `service "sessionPersistence" has been registered` 就是这样漏出去的。遇到这类残留，插件现在的行为是记一条可照做的告警并让官方后端继续服务，而不是让 profile 起不来。

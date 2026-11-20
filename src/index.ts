@@ -45,6 +45,7 @@ import { SessionBackendCatalog, type SessionBackendId } from './catalog.ts'
 import { type LoadedHeader, type LoadedSession, type SqliteSettings } from './database.ts'
 import { recordDiagnostic } from './diagnostics.ts'
 import { registerConsole, type ConsoleConfig } from './console.ts'
+import { claimSessionPersistence } from './service-claim.ts'
 import { PerformanceController } from './performance.ts'
 import { PreviewReader } from './history-preview.ts'
 import { createPerformanceTool, type PerformanceToolRegistry } from './performance-tool.ts'
@@ -974,6 +975,20 @@ function formatsOf(config: Config): readonly SessionFormat[] {
   return config.hybrid || config.jsonlRoot !== '' ? ['sqlite', 'jsonl'] : ['sqlite']
 }
 
+/**
+ * Say something an operator has to act on.
+ *
+ * `ctx.logger` is a ring buffer with a console exporter attached only when the
+ * app configures one; on a plain `dsh` start the buffer is drained by nothing,
+ * so a warning that only goes there is a warning nobody sees. A run that quietly
+ * serves conversations from the wrong backend is worse than one that says so, so
+ * the message is also written to stderr, which every host leaves in place.
+ */
+function announce(ctx: Context, message: string): void {
+  ctx.logger.warn(message)
+  console.warn(message)
+}
+
 /** Console view of a standalone (SQLite-only) install. */
 async function mountStandalone(
   ctx: Context,
@@ -995,8 +1010,18 @@ async function mountStandalone(
     yield tracker.install(ctx)
     service = ctx.plugin({
       name: `${name}-service`,
-      apply(serviceCtx: Context) {
-        instance = new SqliteSessionPersistence(serviceCtx, config, tracker)
+      async apply(serviceCtx: Context) {
+        // The claim can decline: a composition whose patch layer is not in force
+        // has another backend on the key, and taking it would throw. See
+        // `claimSessionPersistence` — declining leaves this mount without an
+        // instance, which `apply` already reads as "no console to serve".
+        await claimSessionPersistence(serviceCtx, {
+          name,
+          create: () => {
+            instance = new SqliteSessionPersistence(serviceCtx, config, tracker)
+          },
+          warn: message => { announce(serviceCtx, message) },
+        })
       },
     })
     yield service.dispose
@@ -1132,7 +1157,16 @@ async function mountHybrid(
   }
 
   // Constructing the router registers it on the real `sessionPersistence` key.
-  new HybridSessionPersistence(ctx, catalog, backends, routerConfig)
+  // Same claim as the standalone mount: a composition that still has the
+  // official backend on the key must leave this one alone rather than throw.
+  const claim = await claimSessionPersistence(ctx, {
+    name,
+    create: () => {
+      new HybridSessionPersistence(ctx, catalog, backends, routerConfig)
+    },
+    warn: message => { announce(ctx, message) },
+  })
+  if (!claim.claimed) return undefined
   ctx.inject(['tools'], toolCtx => { toolCtx.effect(() => (toolCtx as unknown as { tools: PerformanceToolRegistry }).tools.register(createMigrationHistoryTool())) })
   // A format switch has to reach the router, not just this backend: the router is
   // what decides where a conversation nobody routed yet is created. It holds the
