@@ -114,7 +114,7 @@ export function runLiveWritePathContract(
       await restarted.fiber.dispose()
     })
 
-    it('session/flush drains immediately and surfaces a retained background failure', async () => {
+    it('session/flush drains immediately and surfaces a retained background failure', async ({ task, signal }) => {
       const { ctx } = await make()
       const session = ctx.sessions.create(SessionId('flush-surfaces'))
       const handle = await ctx.sessionPersistence.create(session.header)
@@ -129,9 +129,10 @@ export function runLiveWritePathContract(
       session.append('turn/start', { turn: 1 })
       await vi.advanceTimersByTimeAsync(batchDelayMs)
       vi.useRealTimers()
-      await vi.waitFor(() => {
-        expect(warned.mock.calls.join('\n')).toContain('background write for session "flush-surfaces" failed')
-      })
+      await expect.poll(() => {
+        signal.throwIfAborted()
+        return warned.mock.calls.join('\n')
+      }, { timeout: task.timeout }).toContain('background write for session "flush-surfaces" failed')
 
       // The barrier retries the retained batch and rejects loudly...
       await expect(ctx.sessions.flush(session)).rejects.toBe(failure)
@@ -180,7 +181,7 @@ export function runLiveWritePathContract(
       await ctx.fiber.dispose()
     })
 
-    it('session/disposed drains buffered events and closes the handle', async () => {
+    it('session/disposed drains buffered events and closes the handle', async ({ task, signal }) => {
       const { ctx } = await make()
       let session: ReturnType<Context['sessions']['create']> | undefined
       const owner = await ctx.plugin(Object.assign((inner: Context) => {
@@ -191,14 +192,23 @@ export function runLiveWritePathContract(
       session.append('turn/start', { turn: 1 })
       // Buffered, not yet written: disposal must drain before the close.
       await owner.dispose()
-      await vi.waitFor(async () => {
-        expect((await readAll(ctx.sessionPersistence, SessionId('disposed-drains'))).map(event => event.seq)).toEqual([0])
-      })
+      // `session/disposed` listeners are invoked without awaiting the promise
+      // they return, so disposal starts the drain and returns: the contract is
+      // "it lands", not "it has landed when dispose() resolves". Polling on the
+      // test budget instead of `vi.waitFor`'s one-second default keeps that
+      // distinction honest — the drain writes through the worker thread, which
+      // a loaded CI runner can hold up well past a second.
+      await expect.poll(async () => {
+        signal.throwIfAborted()
+        const events = await readAll(ctx.sessionPersistence, SessionId('disposed-drains'))
+        signal.throwIfAborted()
+        return events.map(event => event.seq)
+      }, { timeout: task.timeout }).toEqual([0])
       await expect(handle.append([])).rejects.toThrow(/closed handle/)
       await ctx.fiber.dispose()
     })
 
-    it('a failing final drain on disposal is warned, not thrown', async () => {
+    it('a failing final drain on disposal is warned, not thrown', async ({ task, signal }) => {
       const { ctx } = await make()
       let session: ReturnType<Context['sessions']['create']> | undefined
       const owner = await ctx.plugin(Object.assign((inner: Context) => {
@@ -210,9 +220,10 @@ export function runLiveWritePathContract(
       vi.spyOn(handle, 'close').mockRejectedValue(new Error('drain exploded'))
       session.append('turn/start', { turn: 1 })
       await owner.dispose()
-      await vi.waitFor(() => {
-        expect(warned.mock.calls.join('\n')).toContain('final drain for session "disposed-drain-fails" failed')
-      })
+      await expect.poll(() => {
+        signal.throwIfAborted()
+        return warned.mock.calls.join('\n')
+      }, { timeout: task.timeout }).toContain('final drain for session "disposed-drain-fails" failed')
       warned.mockRestore()
       await ctx.fiber.dispose()
     })
