@@ -207,3 +207,144 @@ describe('a forked conversation', () => {
     expect(copy.events.map((event) => event.seq)).toStrictEqual([0, 1, 2])
   })
 })
+
+/**
+ * The other half of the fork contract: `create` is handed the whole seed log
+ * plus the parent it was cut from, and the store has to have written it before
+ * `create` resolves.
+ *
+ * Every test above re-appends the seed itself, which is what a backend that
+ * ignores `parentSource` also survives — the child simply arrives empty and the
+ * caller fills it. That is exactly the failure this suite has to catch, so the
+ * seed here is never appended by hand: if the store dropped it, the child would
+ * come back with no history at all.
+ */
+describe('a fork created from a parent source', () => {
+  /** Parent prefix, the inherited marker at `cut`, then the child's own turn. */
+  function seededLog(cut: number): SessionEvent[] {
+    return [...forkSeed(cut), ...turn(cut + 1)]
+  }
+
+  it('has the seed on disk before create resolves', async () => {
+    const root = await makeRoot()
+    const ctx = await mount(root)
+    const persistence = ctx.sessionPersistence
+
+    const parent = await persistence.create(headerOf('session-parent'))
+    await parent.append(parentLog())
+    await parent.flush()
+    await parent.close()
+
+    const cut = 4
+    const child = await persistence.create(headerOf('session-forked', true), {
+      inheritedEventCount: cut as never,
+      parentSource: {
+        sessionId: 'session-parent',
+        endSeq: cut,
+        events: seededLog(cut),
+      },
+    } as never)
+    expect(child.inheritedEventCount).toBe(cut)
+    // Read straight from the handle, with no append and no flush in between.
+    const log = await child.read()
+    expect(log.events.map((event) => event.seq)).toStrictEqual([0, 1, 2, 3, 4, 5, 6])
+    const marker = log.events[cut] as unknown as { type: string; data: { inherited?: boolean } }
+    expect(marker.type).toBe('session/end-seed')
+    expect(marker.data.inherited).toBe(true)
+    await child.close()
+
+    // And on disk, from a process that never saw the seed.
+    const second = new Context()
+    await second.plugin(SqliteSessionPersistence, { root, storageThread: 'inline' })
+    contexts.push(second)
+    const reopened = await second.sessionPersistence.open('session-forked' as SessionId, 'read')
+    expect(reopened.inheritedEventCount).toBe(cut)
+    const stored = await reopened.read()
+    expect(stored.events.map((event) => event.seq)).toStrictEqual([0, 1, 2, 3, 4, 5, 6])
+    await reopened.close()
+
+    const listed = await persistence.list()
+    const entry = listed.find((candidate) => candidate.header.id === 'session-forked')
+    // The seed counts as the child's history, inherited prefix included.
+    expect(entry?.eventCount).toBe(7)
+  })
+
+  it('continues from the end of the seed when the child appends', async () => {
+    const root = await makeRoot()
+    const ctx = await mount(root)
+    const persistence = ctx.sessionPersistence
+
+    const parent = await persistence.create(headerOf('session-parent'))
+    await parent.append(parentLog())
+    await parent.flush()
+    await parent.close()
+
+    const cut = 4
+    const child = await persistence.create(headerOf('session-continued', true), {
+      inheritedEventCount: cut as never,
+      parentSource: { sessionId: 'session-parent', endSeq: cut, events: seededLog(cut) },
+    } as never)
+    // seq 7 is one past the seed's last event, so this only passes if the
+    // handle started its cursor at the end of what the store already holds.
+    await child.append(turn(7))
+    await child.flush()
+    await child.close()
+
+    const reopened = await ctx.sessionPersistence.open('session-continued' as SessionId, 'read')
+    const log = await reopened.read()
+    expect(log.events.map((event) => event.seq)).toStrictEqual([0, 1, 2, 3, 4, 5, 6, 7, 8])
+    await reopened.close()
+  })
+
+  it('refuses a fork whose parent this machine does not store', async () => {
+    const root = await makeRoot()
+    const ctx = await mount(root)
+    const persistence = ctx.sessionPersistence
+
+    await expect(
+      persistence.create(headerOf('session-orphan', true), {
+        inheritedEventCount: 4 as never,
+        parentSource: { sessionId: 'session-nowhere', endSeq: 4, events: seededLog(4) },
+      } as never),
+    ).rejects.toThrow(/session-nowhere/)
+  })
+
+  it('refuses a fork cut past the last event the parent stores', async () => {
+    const root = await makeRoot()
+    const ctx = await mount(root)
+    const persistence = ctx.sessionPersistence
+
+    const parent = await persistence.create(headerOf('session-parent'))
+    await parent.append(parentLog())
+    await parent.flush()
+    await parent.close()
+
+    await expect(
+      persistence.create(headerOf('session-toofar', true), {
+        inheritedEventCount: 6 as never,
+        parentSource: { sessionId: 'session-parent', endSeq: 6, events: seededLog(6) },
+      } as never),
+    ).rejects.toThrow(/SESSION_FORK_PREFIX_NOT_PERSISTED/)
+  })
+
+  it('does not leave the id claimed when the fork cannot be written', async () => {
+    const root = await makeRoot()
+    const ctx = await mount(root)
+    const persistence = ctx.sessionPersistence
+
+    await expect(
+      persistence.create(headerOf('session-retried', true), {
+        inheritedEventCount: 4 as never,
+        parentSource: { sessionId: 'session-nowhere', endSeq: 4, events: seededLog(4) },
+      } as never),
+    ).rejects.toThrow(/session-nowhere/)
+
+    // The id was never written, so it is free: a retry must not be told it
+    // already exists because a failed attempt left it claimed.
+    const retried = await persistence.create(headerOf('session-retried', true), {
+      inheritedEventCount: 0 as never,
+    })
+    expect(retried.inheritedEventCount).toBe(0)
+    await retried.close()
+  })
+})

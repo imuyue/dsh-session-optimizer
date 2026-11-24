@@ -108,6 +108,10 @@ PRAGMA busy_timeout   = 5000
 
 fork 必须存三样，并在打开时校验：`header.isSeeded = true`、`inherited_event_count`、切点处 `session/end-seed` 事件的 `data.inherited = true`。错误文案是 `seeded session header requires an inherited event count` 与 `unseeded session header inherited event count must be 0`。继承的前缀事件要重新追加，序号从 0 连续。
 
+从 0.2.3 起宿主的 `create()` 还会带 `parentSource: { sessionId, endSeq, events }`，把整段种子日志和它的父会话一起递过来，并要求后端在 `create()` 返回之前就落盘。本插件是一会话一库，无法像官方 segment 后端那样引用父前缀，所以按「复制型后端」实现：`copyForkLog()` 先排空仍在内存里的父写者，校验父库存在且 `endSeq` 不超过它已存的事件数，`assertContiguous` 之后用**同一个事务**把整段种子（含切点后的子事件）写进子库，句柄的游标从种子末尾起算，调用方不再重复追加。
+
+父库不存在抛 `SessionPersistenceNotFoundError`；`endSeq` 超过父库长度抛 `SessionPersistenceCorruptionError`，文案带 `SESSION_FORK_PREFIX_NOT_PERSISTED`（对应官方错误码语义）。两条都在 `registerCreated` 之后、写盘之前判定，失败会 `abandonCreated` 撤掉占位，所以同一个 id 可以立刻重试，不会被答「already exists」。
+
 ## 版本
 
 `user_version = 2` 只表示「允许有帧」。缺表用 `CREATE TABLE IF NOT EXISTS` 补齐，不改版本号。真正的升级是 `compact()` 或显式的 `dsq upgrade --root <sqliteRoot> [--session <id>]`，后者在一个 `BEGIN IMMEDIATE` 里同时改 `user_version` 与 `storage_meta.schema_version`。

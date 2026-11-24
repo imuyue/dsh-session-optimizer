@@ -30,6 +30,8 @@ import {
   SessionPersistenceRevision,
   sessionFormatVersionRefusal,
   materializeCreateHeader,
+  materializeAppendBatch,
+  assertContiguous,
   assertVersion,
   type SessionPersistenceCreateOptions,
   type SessionPersistenceListOptions,
@@ -191,6 +193,28 @@ function validateInheritedCount(header: SessionHeader, inheritedEventCount: numb
     throw new Error('unseeded session header inherited event count must be 0')
   }
   return cut
+}
+
+/**
+ * The fork source `create()` accepts from 0.2.3 on.
+ *
+ * The field is not in the `SessionPersistenceCreateOptions` this build compiles
+ * against, so it is read structurally: an older host never sets it, and a newer
+ * one sets exactly this shape.
+ */
+interface ForkSource {
+  readonly sessionId: SessionId
+  readonly endSeq: number
+  readonly events: readonly SessionEvent[]
+}
+
+function forkSourceOf(options: SessionPersistenceCreateOptions | undefined): ForkSource | undefined {
+  const fork = (options as { readonly parentSource?: ForkSource } | undefined)?.parentSource
+  if (fork === undefined) return undefined
+  if (!Array.isArray(fork.events)) {
+    throw new Error('a fork source must carry the events it forked from')
+  }
+  return fork
 }
 
 /**
@@ -408,19 +432,80 @@ export class SqliteSessionPersistence extends SessionPersistence {
         throw new SessionAlreadyExistsError(snapshot.id)
       }
       options?.signal?.throwIfAborted()
+      const fork = forkSourceOf(options)
       // registerCreated is the atomic guard: a concurrent create loses here.
       this.tracker.registerCreated(snapshot, inheritedEventCount)
+      let cursor = 0
+      let materialized = false
+      if (fork !== undefined) {
+        try {
+          cursor = await this.copyForkLog(snapshot, fork, inheritedEventCount, options?.signal)
+          materialized = cursor > 0
+        } catch (error) {
+          // The id must not stay claimed by a session that never reached disk.
+          this.tracker.abandonCreated(snapshot.id)
+          throw error
+        }
+      }
       return this.tracker.adopt(
         new SqliteSessionHandle(
           this,
           snapshot.id,
           snapshot,
           'write',
-          { cursor: 0, materialized: false, inheritedEventCount, path },
+          { cursor, materialized, inheritedEventCount, path },
           this.batchDelayMs,
         ),
       )
     })
+  }
+
+  /**
+   * Write the log a fork was seeded with, and report how many events landed.
+   *
+   * This layout is one database per session, so a child cannot reference the
+   * parent's stored prefix the way a segment store does: the prefix is copied.
+   * That makes this a copying backend, which the create contract allows — the
+   * caller hands over the whole seed log and the store keeps all of it, so the
+   * handle starts at the end of that log and the caller never re-appends it.
+   *
+   * The parent is still checked first. A fork that names a session this machine
+   * cannot find, or cuts past that session's last stored event, is a caller bug
+   * that would otherwise surface only as a child whose history looks plausible
+   * and is wrong.
+   */
+  private async copyForkLog(
+    header: SessionHeader,
+    fork: ForkSource,
+    inheritedEventCount: number,
+    signal: AbortSignal | undefined,
+  ): Promise<number> {
+    const live = this.tracker.writerOf(fork.sessionId)
+    if (live !== undefined) await live.flush()
+    signal?.throwIfAborted()
+    const parentPath = await this.executor.findDatabase(this.root, fork.sessionId)
+    if (parentPath === undefined) throw new SessionPersistenceNotFoundError(fork.sessionId)
+    const stored = await this.executor.storedEventCount(parentPath, this.settings)
+    if (fork.endSeq > stored) {
+      throw new SessionPersistenceCorruptionError(
+        `session "${header.id}" forks from "${fork.sessionId}" at seq ${fork.endSeq}, but that session stores only ${stored} event(s) (SESSION_FORK_PREFIX_NOT_PERSISTED)`,
+        {},
+      )
+    }
+    if (fork.endSeq > fork.events.length) {
+      throw new SessionPersistenceCorruptionError(
+        `session "${header.id}" forks from "${fork.sessionId}" at seq ${fork.endSeq}, but the seed it was given holds only ${fork.events.length} event(s)`,
+        {},
+      )
+    }
+    const log = materializeAppendBatch(fork.events)
+    assertContiguous(header.id, log, 0)
+    signal?.throwIfAborted()
+    const path = databasePath(this.root, header.cwd, header.id)
+    await this.executor.ensureDirectory(dirname(path))
+    await this.executor.appendBatch(path, this.settings, header, log, false, inheritedEventCount)
+    this.tracker.materialized(header.id)
+    return log.length
   }
 
   /** Open an existing session, read-only or for writing, taking the lease last. */

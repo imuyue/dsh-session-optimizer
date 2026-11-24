@@ -108,6 +108,10 @@ Decompressed chunks live in an 8 MiB byte-LRU (`src/lru.ts`). Any write clears t
 
 A fork stores three things and validates them on open: `header.isSeeded = true`, `inherited_event_count`, and a `session/end-seed` event at the cut point with `data.inherited = true`. The error messages are `seeded session header requires an inherited event count` and `unseeded session header inherited event count must be 0`. Inherited prefix events are re-appended with contiguous sequence numbers starting at 0.
 
+Since 0.2.3 the host also passes `parentSource: { sessionId, endSeq, events }` to `create()`: the whole seed log plus the session it was cut from, and the backend has to have written it before `create()` resolves. This plugin stores one database per session, so it cannot reference the parent's prefix the way the official segment backend does; it is a copying backend. `copyForkLog()` drains any parent writer still live in memory, checks that the parent store exists and that `endSeq` does not run past what it holds, runs `assertContiguous`, and then writes the whole seed — the child's own events included — in a single transaction. The handle starts its cursor at the end of that seed, so the caller never re-appends it.
+
+A missing parent throws `SessionPersistenceNotFoundError`; an `endSeq` past the parent's last event throws `SessionPersistenceCorruptionError` with `SESSION_FORK_PREFIX_NOT_PERSISTED` in the message, matching the official code. Both are decided after `registerCreated` but before anything is written, and a failure calls `abandonCreated` to drop the claim, so the same id can be retried immediately instead of being answered "already exists".
+
 ## Versioning
 
 `user_version = 2` only means "chunks are allowed". Missing tables are added with `CREATE TABLE IF NOT EXISTS` without changing the version. A real upgrade is either `compact()` or the explicit `dsq upgrade --root <sqliteRoot> [--session <id>]`, which changes `user_version` and `storage_meta.schema_version` inside one `BEGIN IMMEDIATE`.

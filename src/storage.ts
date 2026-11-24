@@ -437,6 +437,24 @@ export class SqliteBackendTracker {
     this.writers.delete(id)
   }
 
+  /**
+   * Give up a created session whose write never reached disk.
+   *
+   * `registerCreated` claims both the write slot and a pending entry; a create
+   * that fails afterwards (a fork whose prefix could not be written) has to
+   * drop both, or the id stays claimed by a session that does not exist and
+   * every retry answers "already exists" for a store nobody can open.
+   */
+  abandonCreated(id: SessionId): void {
+    this.writers.delete(id)
+    this.pending.delete(id)
+  }
+
+  /** The live write handle for a session, when this instance holds one. */
+  writerOf(id: SessionId): SqliteSessionHandle | undefined {
+    return this.writers.get(id) ?? undefined
+  }
+
   /** The session reached disk, so it is no longer pending. */
   materialized(id: SessionId): void {
     this.pending.delete(id)
